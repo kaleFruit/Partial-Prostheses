@@ -1,0 +1,17 @@
+sampledPoints: 289 generatedHoles: 71 initNumVertices: 113852 endNumVertices: 47062 time: 232.22138738632202
+sampledPoints: 287 generatedHoles: 26 initNumVertices: 102956 endNumVertices: 83649 time: 131.90838050842285
+sampledPoints: 259 generatedHoles: 202 initNumVertices: 97567 endNumVertices: 17297 time: 470.6719591617584
+sampledPoints: 267 generatedHoles: 116 initNumVertices: 102001 endNumVertices: 29130 time: 335.1035919189453
+sampledPoints: 451 generatedHoles: 216 initNumVertices: 138789 endNumVertices: 22521 time: 536.2050287723541
+sampledPoints: 145 generatedHoles: 53 initNumVertices: 57080 endNumVertices: 39227 time: 125.444162607193
+sampledPoints: 120 generatedHoles: 75 initNumVertices: 51400 endNumVertices: 21719 time: 138.14240384101868
+sampledPoints: 326 generatedHoles: 99 initNumVertices: 112589 endNumVertices: 29643 time: 337.5187785625458
+sampledPoints: 353 generatedHoles: 169 initNumVertices: 112534 endNumVertices: 16597 time: 759.2282462120056
+sampledPoints: 354 generatedHoles: 79 initNumVertices: 118583 endNumVertices: 25969 time: 312.41768527030945
+sampledPoints: 79 generatedHoles: 35 initNumVertices: 33552 endNumVertices: 22154 time: 61.44937705993652
+sampledPoints: 163 generatedHoles: 126 initNumVertices: 63943 endNumVertices: 21956 time: 238.30411410331726
+sampledPoints: 139 generatedHoles: 139 initNumVertices: 53790 endNumVertices: 18564 time: 241.51746559143066
+sampledPoints: 73 generatedHoles: 28 initNumVertices: 34414 endNumVertices: 27091 time: 53.59150195121765
+sampledPoints: 33 generatedHoles: 33 initNumVertices: 18974 endNumVertices: 14323 time: 29.34815812110901
+sampledPoints: 148 generatedHoles: 86 initNumVertices: 56092 endNumVertices: 21670 time: 158.18511962890625
+sampledPoints: 298 generatedHoles: 296 initNumVertices: 95244 endNumVertices: 11434 time: 456.7763271331787
