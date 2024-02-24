@@ -1227,23 +1227,16 @@ class HandMesh:
         points = self.finalSocket.GetPoints()
 
         def selectPoints(
-            fingerVector: list,
-            fingerJointOrigin: list,
+            selectingSphereOrigin,
             radius: int,
             color=(0.3, 0.2, 1),
             size=5,
         ):
-            point, idx = socket.ray_trace(
-                fingerJointOrigin,
-                [fingerJointOrigin[i] - fingerVector[i] for i in range(3)],
-                first_point=True,
-            )
-            selectingSphere = pv.Sphere(radius=radius, center=point)
+            selectingSphere = pv.Sphere(radius=radius, center=selectingSphereOrigin)
             selectedIds = socket.select_enclosed_points(selectingSphere)[
                 "SelectedPoints"
             ].view(bool)
             finalSelectedIDs = []
-
             for i in range(len(selectedIds)):
                 if selectedIds[i]:
                     closestPoint = handMesh.points[
@@ -1284,8 +1277,6 @@ class HandMesh:
                 # distances.append(np.linalg.norm(u))
                 distances.append(np.linalg.norm(newPos - p))
                 diskOfPoints.append(newPos)
-            avgDistance = abs(sum(distances) / len(distances))
-
             circumferenceOfPoints = [[], []]
             for pair in ConvexHull(diskOfPoints, qhull_options="QJ").vertices:
                 circumferenceOfPoints[0].append(diskOfPoints[pair])
@@ -1299,23 +1290,26 @@ class HandMesh:
             self.plotPointCloud(fd, color=(1, 1, 0.3))
             self.renderWindow.Render()
 
-            return avgDistance, circumferenceOfPoints
+            return circumferenceOfPoints
 
         def proportionallyMovePoints(
             fingerVector: list,
             jointOrigin: list,
-            avgDistance,
             circumferenceOfPoints,
+            selectingSphereOrigin,
             initialRadius=5,
-            numLayers=8,
+            numLayers=5,
         ):
             tree = cKDTree(circumferenceOfPoints[0])
             for j in range(1, numLayers + 1):
-                ids, pts = selectPoints(fingerVector, jointOrigin, initialRadius + j)
+                ids, pts = selectPoints(
+                    selectingSphereOrigin=selectingSphereOrigin,
+                    radius=initialRadius + j,
+                )
                 for idx in ids:
                     p = np.array(points.GetPoint(idx))
                     u = p - np.array(jointOrigin)
-                    dist, closestPointIdx = tree.query(p)
+                    _, closestPointIdx = tree.query(p)
                     distance = circumferenceOfPoints[1][closestPointIdx]
                     # factor = distance/((np.linalg.norm(u)/distance)**2)
                     n = np.array(fingerVector) / np.linalg.norm(np.array(fingerVector))
@@ -1324,19 +1318,31 @@ class HandMesh:
                     newPos = p + n * factor
                     points.SetPoint(idx, newPos)
 
-        for carpal in carpals:
+        initRadius = 5
+        for carpal in carpals[3:4]:
             usedPointIDs = [0 for _ in range(self.finalSocket.GetNumberOfPoints())]
-            listOfIds, _ = selectPoints(
-                carpal["normal"], carpal["center"], 5, color=(0.5, 1, 1), size=10
+
+            point, _ = socket.ray_trace(
+                carpal["center"],
+                [carpal["center"][i] - carpal["normal"][i] for i in range(3)],
+                first_point=True,
             )
-            avgDistance, circumferenceOfPoints = moveSelectedPointsToJoints(
+
+            listOfIds, _ = selectPoints(
+                selectingSphereOrigin=point,
+                radius=initRadius,
+                color=(0.5, 1, 1),
+                size=10,
+            )
+            circumferenceOfPoints = moveSelectedPointsToJoints(
                 listOfIds, carpal["normal"], carpal["center"]
             )
             proportionallyMovePoints(
                 fingerVector=carpal["normal"],
                 jointOrigin=carpal["center"],
-                avgDistance=avgDistance,
                 circumferenceOfPoints=circumferenceOfPoints,
+                initialRadius=initRadius,
+                selectingSphereOrigin=point,
             )
         points.Modified()
         self.finalSocket.Modified()
