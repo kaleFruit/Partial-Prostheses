@@ -433,7 +433,6 @@ class HandMesh:
 
         self.finalSocket = None
 
-
     def genHandView(self, fileName: str):
         reader = vtk.vtkPLYReader()
         reader.SetFileName(fileName)
@@ -1175,7 +1174,7 @@ class HandMesh:
         finalData.SetPoints(combinedPolyData.GetPoints())
         finalData.SetPolys(newCells)
         finalData.GetCellData().SetNormals(normals)
-        
+
         triangle_filter = vtk.vtkTriangleFilter()
         triangle_filter.SetInputData(finalData)
         triangle_filter.Update()
@@ -1227,23 +1226,41 @@ class HandMesh:
         socket = pv.wrap(self.finalSocket)
         points = self.finalSocket.GetPoints()
 
-        def selectPoints(fingerVector:list, fingerJointOrigin:list, radius:int, color = (0.3, 0.2, 1), size = 5):
-            point, idx = socket.ray_trace(fingerJointOrigin, [fingerJointOrigin[i]-fingerVector[i] for i in range(3)], first_point=True)
-            selectingSphere = pv.Sphere(radius=radius, center = point)
-            selectedIds = socket.select_enclosed_points(selectingSphere)['SelectedPoints'].view(bool)
+        def selectPoints(
+            fingerVector: list,
+            fingerJointOrigin: list,
+            radius: int,
+            color=(0.3, 0.2, 1),
+            size=5,
+        ):
+            point, idx = socket.ray_trace(
+                fingerJointOrigin,
+                [fingerJointOrigin[i] - fingerVector[i] for i in range(3)],
+                first_point=True,
+            )
+            selectingSphere = pv.Sphere(radius=radius, center=point)
+            selectedIds = socket.select_enclosed_points(selectingSphere)[
+                "SelectedPoints"
+            ].view(bool)
             finalSelectedIDs = []
 
             for i in range(len(selectedIds)):
                 if selectedIds[i]:
-                    closestPoint = handMesh.points[handMesh.find_closest_point(socket.points[i])]
-                    distance = np.linalg.norm(np.array(socket.points[i]) - np.array(closestPoint))
+                    closestPoint = handMesh.points[
+                        handMesh.find_closest_point(socket.points[i])
+                    ]
+                    distance = np.linalg.norm(
+                        np.array(socket.points[i]) - np.array(closestPoint)
+                    )
                     threshold = 5e-1
-                    if distance >= threshold and usedPointIDs[i]==0:
+                    if distance >= threshold and usedPointIDs[i] == 0:
                         finalSelectedIDs.append(i)
                         usedPointIDs[i] = 1
             extractedPoints = []
             if finalSelectedIDs:
-                extractedPoints = socket.extract_points(finalSelectedIDs, adjacent_cells=False).points
+                extractedPoints = socket.extract_points(
+                    finalSelectedIDs, adjacent_cells=False
+                ).points
             pointsToPlot = extractedPoints
             pls = vtk.vtkPoints()
             for pt in pointsToPlot:
@@ -1254,21 +1271,21 @@ class HandMesh:
             self.renderWindow.Render()
 
             return finalSelectedIDs, extractedPoints
-        
-        def moveSelectedPointsToJoints(pointIDs, fingerVector:list, jointOrigin:list):
+
+        def moveSelectedPointsToJoints(pointIDs, fingerVector: list, jointOrigin: list):
             distances = []
             diskOfPoints = []
             for idx in pointIDs:
                 p = np.array(points.GetPoint(idx))
-                u = p-np.array(jointOrigin)
-                n = np.array(fingerVector)/np.linalg.norm(np.array(fingerVector))
+                u = p - np.array(jointOrigin)
+                n = np.array(fingerVector) / np.linalg.norm(np.array(fingerVector))
                 newPos = p - n * np.dot(u, n)
                 points.SetPoint(idx, newPos)
                 # distances.append(np.linalg.norm(u))
-                distances.append(np.linalg.norm(newPos-p))
+                distances.append(np.linalg.norm(newPos - p))
                 diskOfPoints.append(newPos)
-            avgDistance = abs(sum(distances)/len(distances))
-            
+            avgDistance = abs(sum(distances) / len(distances))
+
             circumferenceOfPoints = [[], []]
             for pair in ConvexHull(diskOfPoints, qhull_options="QJ").vertices:
                 circumferenceOfPoints[0].append(diskOfPoints[pair])
@@ -1282,42 +1299,54 @@ class HandMesh:
             self.plotPointCloud(fd, color=(1, 1, 0.3))
             self.renderWindow.Render()
 
-
             return avgDistance, circumferenceOfPoints
-        
-        def proportionallyMovePoints(fingerVector:list, jointOrigin:list, avgDistance, circumferenceOfPoints, initialRadius=5, numLayers=10):
+
+        def proportionallyMovePoints(
+            fingerVector: list,
+            jointOrigin: list,
+            avgDistance,
+            circumferenceOfPoints,
+            initialRadius=5,
+            numLayers=8,
+        ):
             tree = cKDTree(circumferenceOfPoints[0])
-            for j in range(1, numLayers+1):
-                ids, pts = selectPoints(fingerVector, jointOrigin, initialRadius+j)
+            for j in range(1, numLayers + 1):
+                ids, pts = selectPoints(fingerVector, jointOrigin, initialRadius + j)
                 for idx in ids:
                     p = np.array(points.GetPoint(idx))
-                    u = p-np.array(jointOrigin)
+                    u = p - np.array(jointOrigin)
                     dist, closestPointIdx = tree.query(p)
                     distance = circumferenceOfPoints[1][closestPointIdx]
                     # factor = distance/((np.linalg.norm(u)/distance)**2)
-                    n = np.array(fingerVector)/np.linalg.norm(np.array(fingerVector))
-                    factor = distance/((np.linalg.norm(u)/distance)**2)
-                    print(f"factor: {factor} distance: {distance} dist: {dist}")
+                    n = np.array(fingerVector) / np.linalg.norm(np.array(fingerVector))
+                    factor = distance / ((np.linalg.norm(u) / distance) ** 2)
                     # newPos = p + np.array(socket.point_normals[idx])*factor
-                    newPos = p + n*factor
-                    points.SetPoint(idx, newPos) 
-                
+                    newPos = p + n * factor
+                    points.SetPoint(idx, newPos)
 
-        
-        for carpal in carpals[1:2]:
+        for carpal in carpals:
             usedPointIDs = [0 for _ in range(self.finalSocket.GetNumberOfPoints())]
-            listOfIds, _ = selectPoints(carpal["normal"], carpal["center"], 5, color = (0.5, 1, 1), size =10)
-            avgDistance, circumferenceOfPoints = moveSelectedPointsToJoints(listOfIds, carpal["normal"], carpal["center"])
-            proportionallyMovePoints(fingerVector=carpal["normal"], jointOrigin= carpal["center"], avgDistance = avgDistance, circumferenceOfPoints = circumferenceOfPoints)
+            listOfIds, _ = selectPoints(
+                carpal["normal"], carpal["center"], 5, color=(0.5, 1, 1), size=10
+            )
+            avgDistance, circumferenceOfPoints = moveSelectedPointsToJoints(
+                listOfIds, carpal["normal"], carpal["center"]
+            )
+            proportionallyMovePoints(
+                fingerVector=carpal["normal"],
+                jointOrigin=carpal["center"],
+                avgDistance=avgDistance,
+                circumferenceOfPoints=circumferenceOfPoints,
+            )
         points.Modified()
         self.finalSocket.Modified()
 
-        smooth_butterfly = vtk.vtkButterflySubdivisionFilter()
-        smooth_butterfly.SetNumberOfSubdivisions(3)
-        smooth_butterfly.SetInputData(self.finalSocket)
-        self.finalSocket = smooth_butterfly.GetOutput()
-        
-            
+        smoothFilter = vtk.vtkLoopSubdivisionFilter()
+        smoothFilter.SetNumberOfSubdivisions(3)
+        smoothFilter.SetInputData(self.finalSocket)
+        self.finalSocket = smoothFilter.GetOutput()
+        self.finalSocket.Modified()
+
         # points = np.array(points)
         # tree = cKDTree(points)
         # # Calculate bounding box
@@ -1380,8 +1409,6 @@ class HandMesh:
         # writer.SetFileName("imageAnalysisGeneration/fingerStruct.stl")
         # writer.SetInputData(appendFilter.GetOutput())
         # writer.Write()
-
-
 
 
 class BoundaryExtractor:
@@ -1585,7 +1612,9 @@ class HandManipulator:
         )
 
         point = pd.read_csv(f"csvData/InitialBoneLocations - Index.csv")
-        rootSphere = sphereBone([point.loc[0, "X"], point.loc[0, "Y"], point.loc[0, "Z"]], "Root")
+        rootSphere = sphereBone(
+            [point.loc[0, "X"], point.loc[0, "Y"], point.loc[0, "Z"]], "Root"
+        )
         self.rootSphere = rootSphere
         self.boneReference.update(
             {
@@ -1717,11 +1746,10 @@ class HandManipulator:
             points.loc[0, "Y"] = self.rootSphere.center[1]
             points.loc[0, "Z"] = self.rootSphere.center[2]
             for idx, sphere in enumerate(self.jointsList[fingeridx].keys()):
-                points.loc[idx+1, "X"] = sphere.center[0]
-                points.loc[idx+1, "Y"] = sphere.center[1]
-                points.loc[idx+1, "Z"] = sphere.center[2]
+                points.loc[idx + 1, "X"] = sphere.center[0]
+                points.loc[idx + 1, "Y"] = sphere.center[1]
+                points.loc[idx + 1, "Z"] = sphere.center[2]
             points.to_csv(f"csvData/InitialBoneLocations - {finger}.csv", index=False)
-        
 
     def clearOldFingers(self):
         for finger in self.fingerActors:
