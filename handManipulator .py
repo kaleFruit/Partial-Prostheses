@@ -428,7 +428,7 @@ class HandMesh:
         self.holesInCells = [0] * self.actor.GetMapper().GetInput().GetNumberOfCells()
         self.thickness = 2
 
-        self.fromPreviousDesign = True
+        self.fromPreviousDesign = False
         self.initTime = 0
 
         self.finalSocket = None
@@ -1225,6 +1225,30 @@ class HandMesh:
         usedPointIDs = [0 for _ in range(self.finalSocket.GetNumberOfPoints())]
         socket = pv.wrap(self.finalSocket)
         points = self.finalSocket.GetPoints()
+        newProportionalPositions = {}
+
+        sphereOriginPoints = []
+        distBetweenSphereOrgAndJoint = []
+        carpalNormals = (0, 0, 0)
+        for carpal in carpals:
+            point, _ = socket.ray_trace(
+                carpal["center"],
+                [carpal["center"][i] - carpal["normal"][i] for i in range(3)],
+                first_point=True,
+            )
+            sphereOriginPoints.append(point)
+            carpalNormals = carpalNormals + np.array(carpals[i]["normal"])
+            distBetweenSphereOrgAndJoint.append(
+                np.linalg.norm(carpal["center"] - point)
+            )
+        averageCarpalNormal = carpalNormals / len(carpals)
+        remainingSocket = socket.clip(
+            normal=averageCarpalNormal,
+            origin=sphereOriginPoints[
+                distBetweenSphereOrgAndJoint.index(min(distBetweenSphereOrgAndJoint))
+            ],
+        )
+        print(averageCarpalNormal)
 
         def selectPoints(
             selectingSphereOrigin,
@@ -1233,17 +1257,17 @@ class HandMesh:
             size=5,
         ):
             selectingSphere = pv.Sphere(radius=radius, center=selectingSphereOrigin)
-            selectedIds = socket.select_enclosed_points(selectingSphere)[
+            selectedIds = remainingSocket.select_enclosed_points(selectingSphere)[
                 "SelectedPoints"
             ].view(bool)
             finalSelectedIDs = []
             for i in range(len(selectedIds)):
                 if selectedIds[i]:
                     closestPoint = handMesh.points[
-                        handMesh.find_closest_point(socket.points[i])
+                        handMesh.find_closest_point(remainingSocket.points[i])
                     ]
                     distance = np.linalg.norm(
-                        np.array(socket.points[i]) - np.array(closestPoint)
+                        np.array(remainingSocket.points[i]) - np.array(closestPoint)
                     )
                     threshold = 5e-1
                     if distance >= threshold and usedPointIDs[i] == 0:
@@ -1251,17 +1275,17 @@ class HandMesh:
                         usedPointIDs[i] = 1
             extractedPoints = []
             if finalSelectedIDs:
-                extractedPoints = socket.extract_points(
+                extractedPoints = remainingSocket.extract_points(
                     finalSelectedIDs, adjacent_cells=False
                 ).points
-            pointsToPlot = extractedPoints
-            pls = vtk.vtkPoints()
-            for pt in pointsToPlot:
-                pls.InsertNextPoint(pt)
-            fd = vtk.vtkPolyData()
-            fd.SetPoints(pls)
-            self.plotPointCloud(fd, color=color, size=size)
-            self.renderWindow.Render()
+            # pointsToPlot = extractedPoints
+            # pls = vtk.vtkPoints()
+            # for pt in pointsToPlot:
+            #     pls.InsertNextPoint(pt)
+            # fd = vtk.vtkPolyData()
+            # fd.SetPoints(pls)
+            # self.plotPointCloud(fd, color=color, size=size)
+            # self.renderWindow.Render()
 
             return finalSelectedIDs, extractedPoints
 
@@ -1274,22 +1298,20 @@ class HandMesh:
                 n = np.array(fingerVector) / np.linalg.norm(np.array(fingerVector))
                 newPos = p - n * np.dot(u, n)
                 points.SetPoint(idx, newPos)
-                # distances.append(np.linalg.norm(u))
                 distances.append(np.linalg.norm(newPos - p))
                 diskOfPoints.append(newPos)
             circumferenceOfPoints = [[], []]
             for pair in ConvexHull(diskOfPoints, qhull_options="QJ").vertices:
                 circumferenceOfPoints[0].append(diskOfPoints[pair])
                 circumferenceOfPoints[1].append(distances[pair])
-            pointsToPlot = circumferenceOfPoints[0]
-            pls = vtk.vtkPoints()
-            for pt in pointsToPlot:
-                pls.InsertNextPoint(pt)
-            fd = vtk.vtkPolyData()
-            fd.SetPoints(pls)
-            self.plotPointCloud(fd, color=(1, 1, 0.3))
-            self.renderWindow.Render()
-
+            # pointsToPlot = circumferenceOfPoints[0]
+            # pls = vtk.vtkPoints()
+            # for pt in pointsToPlot:
+            #     pls.InsertNextPoint(pt)
+            # fd = vtk.vtkPolyData()
+            # fd.SetPoints(pls)
+            # self.plotPointCloud(fd, color=(1, 1, 0.3))
+            # self.renderWindow.Render()
             return circumferenceOfPoints
 
         def proportionallyMovePoints(
@@ -1298,7 +1320,7 @@ class HandMesh:
             circumferenceOfPoints,
             selectingSphereOrigin,
             initialRadius=5,
-            numLayers=5,
+            numLayers=10,
         ):
             tree = cKDTree(circumferenceOfPoints[0])
             for j in range(1, numLayers + 1):
@@ -1316,18 +1338,18 @@ class HandMesh:
                     factor = distance / ((np.linalg.norm(u) / distance) ** 2)
                     # newPos = p + np.array(socket.point_normals[idx])*factor
                     newPos = p + n * factor
-                    points.SetPoint(idx, newPos)
+                    if idx in newProportionalPositions:
+                        newProportionalPositions[idx] = (
+                            newProportionalPositions[idx] + newPos
+                        ) / 2
+                    else:
+                        newProportionalPositions[idx] = newPos
 
         initRadius = 5
-        for carpal in carpals[3:4]:
+        startTime = time.time()
+        for k, carpal in enumerate(carpals[:1]):
             usedPointIDs = [0 for _ in range(self.finalSocket.GetNumberOfPoints())]
-
-            point, _ = socket.ray_trace(
-                carpal["center"],
-                [carpal["center"][i] - carpal["normal"][i] for i in range(3)],
-                first_point=True,
-            )
-
+            point = sphereOriginPoints[k]
             listOfIds, _ = selectPoints(
                 selectingSphereOrigin=point,
                 radius=initRadius,
@@ -1344,77 +1366,38 @@ class HandMesh:
                 initialRadius=initRadius,
                 selectingSphereOrigin=point,
             )
+            print(time.time() - startTime)
+        for pointToMove, newPointPosition in newProportionalPositions.items():
+            points.SetPoint(pointToMove, newPointPosition)
         points.Modified()
         self.finalSocket.Modified()
-
-        smoothFilter = vtk.vtkLoopSubdivisionFilter()
-        smoothFilter.SetNumberOfSubdivisions(3)
-        smoothFilter.SetInputData(self.finalSocket)
-        self.finalSocket = smoothFilter.GetOutput()
+        socket = pv.wrap(self.finalSocket)
+        smoothSocket = socket.smooth_taubin(n_iter=80, pass_band=0.5)
+        self.finalSocket.DeepCopy(smoothSocket)
         self.finalSocket.Modified()
+        self.renderWindow.Render()
 
-        # points = np.array(points)
-        # tree = cKDTree(points)
-        # # Calculate bounding box
-        # minCoords = np.min(points, axis=0)
-        # maxCoords = np.max(points, axis=0)
-        # origin = minCoords
-        # n = 100
-        # alpha = max(maxCoords - minCoords)
-        # spacing = alpha / n
-        # grid = pv.ImageData(
-        #     dimensions=(n, n, n), spacing=(spacing, spacing, spacing), origin=origin
-        # )
-        # x, y, z = grid.points.T
-        # distances, _ = tree.query(np.c_[x, y, z])
-        # values = distances**2
+        appendFilter = vtkAppendPolyData()
+        appendFilter.AddInputData(self.finalSocket)
+        for i, finger in enumerate(baseFingerMeshes):
+            appendFilter.AddInputData(finger)
+        appendFilter.Update()
+        writer = vtk.vtkSTLWriter()
+        writer.SetFileName("toBePrinted/totalStruct.stl")
+        writer.SetInputData(appendFilter.GetOutput())
+        writer.Write()
 
-        # pl = pv.Plotter()
-        # actor = pl.add_points(points, render_points_as_spheres=False, point_size=100.0)
-        # pl.show()
+        writer.SetFileName("imageAnalysisGeneration/socketStruct.stl")
+        writer.SetInputData(self.finalSocket)
+        writer.Write()
 
-        # isoValues = [
-        #     0.3,
-        #     0.5,
-        #     0.8,
-        #     1.0,
-        #     2.0,
-        #     3.0,
-        #     4.0,
-        #     5.0,
-        #     10.0,
-        #     20.0,
-        # ]
-
-        # for isoVal in isoValues:
-        #     mesh = grid.contour([isoVal], scalars=values, method="flying_edges")
-        #     if mesh.n_points > 0:
-        #         mesh.plot(smooth_shading=True, cmap="plasma", show_scalar_bar=False)
-        #         print(isoVal)
-        #         break
-        #     else:
-        #         pass
-        # appendFilter = vtkAppendPolyData()
-        # appendFilter.AddInputData(self.finalSocket)
-        # for i, finger in enumerate(baseFingerMeshes):
-        #     appendFilter.AddInputData(finger)
-        # appendFilter.Update()
-        # writer = vtk.vtkSTLWriter()
-        # writer.SetFileName("imageAnalysisGeneration/totalStruct.stl")
-        # writer.SetInputData(appendFilter.GetOutput())
-        # writer.Write()
-
-        # writer.SetFileName("imageAnalysisGeneration/socketStruct.stl")
-        # writer.SetInputData(self.finalSocket)
-        # writer.Write()
-
-        # appendFilter = vtkAppendPolyData()
-        # for i, finger in enumerate(baseFingerMeshes):
-        #     appendFilter.AddInputData(finger)
-        # appendFilter.Update()
-        # writer.SetFileName("imageAnalysisGeneration/fingerStruct.stl")
-        # writer.SetInputData(appendFilter.GetOutput())
-        # writer.Write()
+        appendFilter = vtkAppendPolyData()
+        for i, finger in enumerate(baseFingerMeshes):
+            appendFilter.AddInputData(finger)
+        appendFilter.Update()
+        writer.SetFileName("imageAnalysisGeneration/fingerStruct.stl")
+        writer.SetInputData(appendFilter.GetOutput())
+        writer.Write()
 
 
 class BoundaryExtractor:
