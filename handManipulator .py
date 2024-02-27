@@ -1263,14 +1263,18 @@ class HandMesh:
             )
         averageCarpalNormal = carpalNormals / len(carpals)
         averageCarpalNormal = averageCarpalNormal / np.linalg.norm(averageCarpalNormal)
+        planeOriginPoint = (
+            sphereOriginPoints[
+                distBetweenSphereOrgAndJoint.index(max(distBetweenSphereOrgAndJoint))
+            ]
+            - 10 * averageCarpalNormal
+        )
         p = pv.Plotter()
         testPlane = pv.Plane(
             direction=averageCarpalNormal,
-            center=sphereOriginPoints[
-                distBetweenSphereOrgAndJoint.index(max(distBetweenSphereOrgAndJoint))
-            ],
-            i_size=20,
-            j_size=20,
+            center=planeOriginPoint,
+            i_size=500,
+            j_size=500,
         )
         testPlane.point_data.clear()
         p.add_mesh(testPlane, show_edges=True)
@@ -1290,6 +1294,7 @@ class HandMesh:
             color=(0.3, 0.2, 1),
             size=5,
         ):
+            start = time.time()
             selectingSphere = pv.Sphere(radius=radius, center=selectingSphereOrigin)
             selectedIds = remainingSocket.select_enclosed_points(selectingSphere)[
                 "SelectedPoints"
@@ -1320,6 +1325,11 @@ class HandMesh:
             fd.SetPoints(pls)
             self.plotPointCloud(fd, color=color, size=size)
             self.renderWindow.Render()
+            file1 = open(
+                "strengthAnalysis/connectiveGenerationTimes.txt", "a"
+            )  
+            file1.write(f"selection: {time.time()-start}")
+            file1.close()
 
             return finalSelectedIDs, extractedPoints
 
@@ -1353,7 +1363,7 @@ class HandMesh:
             jointOrigin: list,
             circumferenceOfPoints,
             selectingSphereOrigin,
-            initialRadius=5,
+            initialRadius=7,
             numLayers=10,
         ):
             tree = cKDTree(circumferenceOfPoints[0])
@@ -1362,6 +1372,7 @@ class HandMesh:
                     selectingSphereOrigin=selectingSphereOrigin,
                     radius=initialRadius + j,
                 )
+                start = time.time()
                 for idx in ids:
                     p = np.array(remainingSocket.points[idx])
                     u = p - np.array(jointOrigin)
@@ -1378,10 +1389,14 @@ class HandMesh:
                         ) / 2
                     else:
                         newProportionalPositions[idx] = newPos
+                file1 = open(
+                    "strengthAnalysis/connectiveGenerationTimes.txt", "a"
+                )  
+                file1.write(f"layer{j}: {time.time()-start}")
+                file1.close()
 
-        initRadius = 5
-        startTime = time.time()
-        for k, carpal in enumerate(carpals):
+        initRadius = 12
+        for k, carpal in enumerate(carpals[:1]):
             usedPointIDs = [0 for _ in range(len(remainingSocket.points))]
             point = sphereOriginPoints[k]
             listOfIds, _ = selectPoints(
@@ -1400,14 +1415,12 @@ class HandMesh:
                 initialRadius=initRadius,
                 selectingSphereOrigin=point,
             )
-            print(time.time() - startTime)
         for pointToMove, newPointPosition in newProportionalPositions.items():
             remainingSocket.points[pointToMove] = newPointPosition
-        smoothSocket = remainingSocket.smooth_taubin(n_iter=100, pass_band=0.5)
+        reconnectedSocket = otherSocketHalf.merge(remainingSocket)
+        smoothSocket = reconnectedSocket.smooth_taubin(n_iter=60, pass_band=0.5)
         smoothSocket.plot()
-
-        reconnectedSocket = otherSocketHalf.merge(smoothSocket)
-        cleanedSocket = reconnectedSocket.clean()
+        cleanedSocket = smoothSocket.clean()
         cleanedSocket.plot()
 
         self.finalSocket.DeepCopy(cleanedSocket)
@@ -1416,10 +1429,8 @@ class HandMesh:
 
         appendFilter = vtkAppendPolyData()
         appendFilter.AddInputData(self.finalSocket)
-        print("HERE")
         for i, finger in enumerate(fingerMeshes):
             appendFilter.AddInputData(finger)
-            print(i)
         appendFilter.Update()
 
         writer = vtk.vtkSTLWriter()
@@ -1430,14 +1441,6 @@ class HandMesh:
         writer.SetFileName("imageAnalysisGeneration/socketStruct.stl")
         writer.SetInputData(self.finalSocket)
         writer.Write()
-
-        # appendFilter = vtkAppendPolyData()
-        # for i, finger in enumerate(fingerMeshes):
-        #     appendFilter.AddInputData(finger)
-        # appendFilter.Update()
-        # writer.SetFileName("imageAnalysisGeneration/fingerStruct.stl")
-        # writer.SetInputData(appendFilter.GetOutput())
-        # writer.Write()
 
 
 class BoundaryExtractor:
@@ -1809,6 +1812,105 @@ class HandManipulator:
                 fingerConnectors.append(thing.GetMapper().GetInput())
         return fingerConnectors
 
+    def generateFingersData(self):
+        self.clearOldFingers()
+        for jointListIdx in range(len(self.jointsList)):
+            start = time.time()
+            jointList = self.jointsList[jointListIdx]
+            print(list(jointList.keys()))
+            length = np.linalg.norm(
+                np.array(list(jointList.keys())[len(jointList.keys()) - 1].center)
+                - np.array(list(jointList.keys())[0].center)
+            )
+            tempMeshList = []
+            jointNeighborIndex = jointListIdx + 1
+            if jointListIdx == len(self.jointsList) - 1:
+                jointNeighborIndex = jointListIdx - 1
+            jointNeighborList = self.jointsList[jointNeighborIndex]
+            central = np.array(self.rootSphere.center)
+            u = np.array(list(jointList.keys())[1].center) - central
+            v = np.array(list(jointNeighborList.keys())[1].center) - central
+            normal = np.cross(u, v)
+            if jointListIdx == len(self.jointsList) - 1:
+                normal *= -1
+            for jointIdx in range(1, len(self.jointsList[jointListIdx])):
+                pointEnd = np.array(list(jointList.keys())[jointIdx].center)
+                pointStart = np.array(list(jointList.keys())[jointIdx - 1].center)
+                vector = pointEnd - pointStart
+                midpoint = (pointStart + pointEnd) / 2
+                fingerBodyLength = np.linalg.norm(vector)
+                direction = vector / fingerBodyLength
+
+                topRadii = 5
+                bottomRadii = 4
+                fingerBodyHeight = 12
+                fingerBodyWidth = 14
+                resolution = 9
+                holeRadius = 1
+
+                part = self.generateFingerPart(
+                    resolution=resolution,
+                    topRadii=topRadii,
+                    bottomRadii=bottomRadii,
+                    fingerBodyHeight=fingerBodyHeight,
+                    fingerBodyWidth=fingerBodyWidth,
+                    holeRadius=holeRadius,
+                    fingerBodyLength=fingerBodyLength,
+                )
+                part = self.moveAlignMesh(part, midpoint, direction, normal)
+                vtk_polydata = part.extract_geometry()
+                mapper = vtk.vtkPolyDataMapper()
+
+                mapper.SetInputData(vtk_polydata)
+                actor = vtk.vtkActor()
+                actor.SetMapper(mapper)
+                tempMeshList.append(actor)
+                file1 = open(
+                    "strengthAnalysis/fingerGenerationTimes.txt", "a"
+                )  # append mode
+                file1.write(f"{length} {time.time()-start}\n")
+                file1.close()
+            self.fingerActors.append(tempMeshList)
+
+            resolutionEnd = 10
+            resolutionBody = 10
+            thickness = 1.3
+            endRadius = 1.7
+            length = 5.8
+            width = fingerBodyWidth
+
+            tempMeshList = []
+            for jointIdx in range(1, len(self.jointsList[jointListIdx])):
+
+                pointEnd = np.array(list(jointList.keys())[jointIdx].center)
+                pointStart = np.array(list(jointList.keys())[jointIdx - 1].center)
+                vector = pointEnd - pointStart
+                direction = vector / np.linalg.norm(vector)
+
+                part = self.genConnector(
+                    endRadius=endRadius,
+                    length=length,
+                    thickness=thickness,
+                    resolutionBody=resolutionBody,
+                    resolutionEnd=resolutionEnd,
+                    width=width + 1,
+                )
+                part = self.moveAlignMesh(
+                    part,
+                    pointStart,
+                    direction,
+                    normal,
+                )
+                vtk_polydata = part.extract_geometry()
+                mapper = vtk.vtkPolyDataMapper()
+                mapper.SetInputData(vtk_polydata)
+                actor = vtk.vtkActor()
+                actor.SetMapper(mapper)
+                tempMeshList.append(actor)
+            self.fingerConnectorActors.append(tempMeshList)
+        # self.cutConnectors()
+        self.displayFingerMeshes()
+
     def generateFingers(self):
         self.clearOldFingers()
         for jointListIdx in range(len(self.jointsList)):
@@ -1834,10 +1936,10 @@ class HandManipulator:
 
                 topRadii = 5
                 bottomRadii = 4
-                fingerBodyHeight = 10
-                fingerBodyWidth = 12
+                fingerBodyHeight = 12
+                fingerBodyWidth = 14
                 resolution = 9
-                holeRadius = 0.6
+                holeRadius = 1
 
                 part = self.generateFingerPart(
                     resolution=resolution,
@@ -1861,8 +1963,8 @@ class HandManipulator:
             resolutionEnd = 10
             resolutionBody = 10
             thickness = 1.3
-            endRadius = 2
-            length = 4
+            endRadius = 1.7
+            length = 5.8
             width = fingerBodyWidth
 
             tempMeshList = []
@@ -1944,51 +2046,6 @@ class HandManipulator:
                 actor = vtk.vtkActor()
                 actor.SetMapper(mapper)
                 self.fingerActors[fingerIdx][boneIdx] = actor
-
-    def cutConnectors2(self):
-        for fingerIdx, finger in enumerate(self.fingerActors):
-            for boneIdx, bone in enumerate(finger):
-                pvBone = pv.wrap(bone.GetMapper().GetInput())
-                pvBone.compute_normals(inplace=True)
-
-                connector = pv.wrap(
-                    self.fingerConnectorActors[fingerIdx][boneIdx]
-                    .GetMapper()
-                    .GetInput()
-                )
-                connector.compute_normals(inplace=True)
-
-                boolean = vtkPolyDataBooleanFilter()
-                boolean.SetInputData(0, pvBone)
-                boolean.SetInputData(1, connector)
-                boolean.SetOperModeToDifference()
-
-                if fingerIdx > 0:
-                    pvBone = pv.wrap(boolean.GetOutput())
-                    pvBone.compute_normals(inplace=True)
-                    pvBone.plot()
-                    connector = pv.wrap(
-                        self.fingerConnectorActors[fingerIdx][boneIdx - 1]
-                        .GetMapper()
-                        .GetInput()
-                    )
-                    connector.compute_normals(inplace=True)
-
-                    boolean.SetInputData(0, pvBone)
-                    boolean.SetInputData(1, connector)
-                    boolean.SetOperModeToDifference()
-
-                    mapper = vtk.vtkPolyDataMapper()
-                    mapper.SetInputConnection(boolean.GetOutputPort())
-                    actor = vtk.vtkActor()
-                    actor.SetMapper(mapper)
-                    self.fingerActors[fingerIdx][boneIdx] = actor
-                else:
-                    mapper = vtk.vtkPolyDataMapper()
-                    mapper.SetInputData(pvBone.extract_geometry())
-                    actor = vtk.vtkActor()
-                    actor.SetMapper(mapper)
-                    self.fingerActors[fingerIdx][boneIdx] = actor
 
     def displayFingerMeshes(self):
         for finger in self.fingerActors:
@@ -2487,6 +2544,9 @@ class HandManipulator:
                 2 * resolutionBody + 2 + resolutionEnd,
             )
         )
+        offset = 1.5
+        for i, point in enumerate(totalVertices):
+            totalVertices[i] = (point[0], point[1] - offset, point[2])
         return pv.PolyData(totalVertices, totalFaces)
 
 
