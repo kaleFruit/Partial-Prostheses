@@ -403,7 +403,6 @@ class GUI(Qt.QMainWindow):
             joint.toggled = True
 
     def testSocket(self):
-
         writer = vtk.vtkSTLWriter()
         for i, finger in enumerate(self.handManipulator.getFingerMeshes()):
             writer.SetFileName(f"imageAnalysisGeneration/fingerStruct{i}.stl")
@@ -1244,80 +1243,72 @@ class HandMesh:
 
     def genHandPortion(self, carpals, fingerMeshes):
         handMesh = pv.wrap(self.actor.GetMapper().GetInput())
+        jointRegionalPointIDXs = []
 
         socket = pv.wrap(self.finalSocket)
         newProportionalPositions = {}
-        sphereOriginPoints = []
-        distBetweenSphereOrgAndJoint = []
-        carpalNormals = (0, 0, 0)
-        for carpal in carpals:
+
+        initRadius = 12
+        layers = 5
+        overallTime = time.time()
+        for i, carpal in enumerate(carpals):
+            start = time.time()
+
+            tempIDList = []
             point, _ = socket.ray_trace(
                 carpal["center"],
                 [carpal["center"][i] - carpal["normal"][i] for i in range(3)],
                 first_point=True,
             )
-            sphereOriginPoints.append(point)
-            carpalNormals = carpalNormals + np.array(carpal["normal"])
-            distBetweenSphereOrgAndJoint.append(
-                np.linalg.norm(carpal["center"] - point)
-            )
-        averageCarpalNormal = carpalNormals / len(carpals)
-        averageCarpalNormal = averageCarpalNormal / np.linalg.norm(averageCarpalNormal)
-        planeOriginPoint = (
-            sphereOriginPoints[
-                distBetweenSphereOrgAndJoint.index(max(distBetweenSphereOrgAndJoint))
-            ]
-            - 10 * averageCarpalNormal
-        )
-        p = pv.Plotter()
-        testPlane = pv.Plane(
-            direction=averageCarpalNormal,
-            center=planeOriginPoint,
-            i_size=500,
-            j_size=500,
-        )
-        testPlane.point_data.clear()
-        p.add_mesh(testPlane, show_edges=True)
-        p.add_mesh(socket)
-        p.show()
-        remainingSocket, otherSocketHalf = socket.clip(
-            normal=-1 * averageCarpalNormal,
-            origin=sphereOriginPoints[
-                distBetweenSphereOrgAndJoint.index(max(distBetweenSphereOrgAndJoint))
-            ],
-            return_clipped=True,
-        )
+            selectingSphere = pv.Sphere(radius=initRadius + layers, center=point)
+            selectedIds = socket.select_enclosed_points(selectingSphere)[
+                "SelectedPoints"
+            ].view(bool)
+            counter = 0
+            threshold = 5e-1
+            for idx in range(len(selectedIds)):
+                if selectedIds[idx]:
+                    point = socket.points[idx]
+                    closestPoint = handMesh.points[handMesh.find_closest_point(point)]
+                    distance = np.linalg.norm(np.array(point) - np.array(closestPoint))
+                    if distance >= threshold:
+                        tempIDList.append(idx)
+                        counter += 1
+            jointRegionalPointIDXs.append(tempIDList)
+
+            file1 = open("strengthAnalysis/connectiveGenerationTimes.txt", "a")
+            file1.write(f"initial selection {i}: {time.time()-start}\n")
+            file1.close()
 
         def selectPoints(
-            selectingSphereOrigin,
+            carpalOrigin,
+            carpalVector,
             radius: int,
             color=(0.3, 0.2, 1),
             size=5,
         ):
+            threshold = 5e-1
             start = time.time()
-            selectingSphere = pv.Sphere(radius=radius, center=selectingSphereOrigin)
-            selectedIds = remainingSocket.select_enclosed_points(selectingSphere)[
+            point, _ = socket.ray_trace(
+                carpalOrigin,
+                [carpalOrigin[i] - carpalVector[i] for i in range(3)],
+                first_point=True,
+            )
+            selectingSphere = pv.Sphere(radius=radius, center=point)
+            selectedIds = socket.select_enclosed_points(selectingSphere)[
                 "SelectedPoints"
             ].view(bool)
-            finalSelectedIDs = []
-            for i in range(len(selectedIds)):
-                if selectedIds[i]:
-                    closestPoint = handMesh.points[
-                        handMesh.find_closest_point(remainingSocket.points[i])
-                    ]
-                    distance = np.linalg.norm(
-                        np.array(remainingSocket.points[i]) - np.array(closestPoint)
-                    )
-                    threshold = 5e-1
-                    if distance >= threshold and usedPointIDs[i] == 0:
-                        finalSelectedIDs.append(i)
-                        usedPointIDs[i] = 1
-            extractedPoints = []
-            if finalSelectedIDs:
-                extractedPoints = remainingSocket.extract_points(
-                    finalSelectedIDs, adjacent_cells=False
-                ).points
-            pointsToPlot = extractedPoints
+            extractedPointIdx = []
+            for idx in range(len(selectedIds)):
+                if selectedIds[idx]:
+                    point = socket.points[idx]
+                    closestPoint = handMesh.points[handMesh.find_closest_point(point)]
+                    distance = np.linalg.norm(np.array(point) - np.array(closestPoint))
+                    if distance >= threshold:
+                        extractedPointIdx.append(idx)
+            pointsToPlot = socket.extract_points(
+                selectedIds, adjacent_cells=False, include_cells=True
+            ).points
             pls = vtk.vtkPoints()
             for pt in pointsToPlot:
                 pls.InsertNextPoint(pt)
@@ -1325,23 +1316,26 @@ class HandMesh:
             fd.SetPoints(pls)
             self.plotPointCloud(fd, color=color, size=size)
             self.renderWindow.Render()
-            file1 = open(
-                "strengthAnalysis/connectiveGenerationTimes.txt", "a"
-            )  
-            file1.write(f"selection: {time.time()-start}")
+
+            file1 = open("strengthAnalysis/connectiveGenerationTimes.txt", "a")
+            file1.write(f"selection: {time.time()-start}\n")
             file1.close()
+            return extractedPointIdx
 
-            return finalSelectedIDs, extractedPoints
-
-        def moveSelectedPointsToJoints(pointIDs, fingerVector: list, jointOrigin: list):
+        def moveSelectedPointsToJoints(
+            pointIDs, jointIdx, totalJointIds, fingerVector: list, jointOrigin: list
+        ):
             distances = []
             diskOfPoints = []
             for idx in pointIDs:
-                p = np.array(remainingSocket.points[idx])
+                p = np.array(socket.points[idx])
                 u = p - np.array(jointOrigin)
                 n = np.array(fingerVector) / np.linalg.norm(np.array(fingerVector))
                 newPos = p - n * np.dot(u, n)
-                remainingSocket.points[idx] = newPos
+                newProportionalPositions[idx] = newPos
+                for j in range(jointIdx, totalJointIds):
+                    if idx in jointRegionalPointIDXs[j]:
+                        jointRegionalPointIDXs[j].remove(idx)
                 distances.append(np.linalg.norm(newPos - p))
                 diskOfPoints.append(newPos)
             circumferenceOfPoints = [[], []]
@@ -1361,66 +1355,53 @@ class HandMesh:
         def proportionallyMovePoints(
             fingerVector: list,
             jointOrigin: list,
+            jointIdx,
             circumferenceOfPoints,
-            selectingSphereOrigin,
-            initialRadius=7,
-            numLayers=10,
         ):
             tree = cKDTree(circumferenceOfPoints[0])
-            for j in range(1, numLayers + 1):
-                ids, pts = selectPoints(
-                    selectingSphereOrigin=selectingSphereOrigin,
-                    radius=initialRadius + j,
-                )
-                start = time.time()
-                for idx in ids:
-                    p = np.array(remainingSocket.points[idx])
-                    u = p - np.array(jointOrigin)
-                    _, closestPointIdx = tree.query(p)
-                    distance = circumferenceOfPoints[1][closestPointIdx]
-                    # factor = distance/((np.linalg.norm(u)/distance)**2)
-                    n = np.array(fingerVector) / np.linalg.norm(np.array(fingerVector))
-                    factor = distance / ((np.linalg.norm(u) / distance) ** 2)
-                    # newPos = p + np.array(socket.point_normals[idx])*factor
-                    newPos = p + n * factor
-                    if idx in newProportionalPositions:
-                        newProportionalPositions[idx] = (
-                            newProportionalPositions[idx] + newPos
-                        ) / 2
-                    else:
-                        newProportionalPositions[idx] = newPos
-                file1 = open(
-                    "strengthAnalysis/connectiveGenerationTimes.txt", "a"
-                )  
-                file1.write(f"layer{j}: {time.time()-start}")
-                file1.close()
+            for idx in jointRegionalPointIDXs[jointIdx]:
+                p = np.array(socket.points[idx])
+                u = p - np.array(jointOrigin)
+                _, closestPointIdx = tree.query(p)
+                distance = circumferenceOfPoints[1][closestPointIdx]
+                n = np.array(fingerVector) / np.linalg.norm(np.array(fingerVector))
+                factor = distance / ((np.linalg.norm(u) / distance) ** 2)
+                newPos = p + n * factor
+                if idx in newProportionalPositions:
+                    newProportionalPositions[idx] = (
+                        newProportionalPositions[idx] + newPos
+                    ) / 2
+                else:
+                    newProportionalPositions[idx] = newPos
 
-        initRadius = 12
-        for k, carpal in enumerate(carpals[:1]):
-            usedPointIDs = [0 for _ in range(len(remainingSocket.points))]
-            point = sphereOriginPoints[k]
-            listOfIds, _ = selectPoints(
-                selectingSphereOrigin=point,
+        for k, carpal in enumerate(carpals):
+            listOfIds = selectPoints(
+                carpalOrigin=carpal["center"],
+                carpalVector=carpal["normal"],
                 radius=initRadius,
                 color=(0.5, 1, 1),
                 size=10,
             )
             circumferenceOfPoints = moveSelectedPointsToJoints(
-                listOfIds, carpal["normal"], carpal["center"]
+                pointIDs=listOfIds,
+                jointIdx=k,
+                totalJointIds=len(carpals),
+                fingerVector=carpal["normal"],
+                jointOrigin=carpal["center"],
             )
             proportionallyMovePoints(
                 fingerVector=carpal["normal"],
                 jointOrigin=carpal["center"],
                 circumferenceOfPoints=circumferenceOfPoints,
-                initialRadius=initRadius,
-                selectingSphereOrigin=point,
+                jointIdx=k,
             )
+
         for pointToMove, newPointPosition in newProportionalPositions.items():
-            remainingSocket.points[pointToMove] = newPointPosition
-        reconnectedSocket = otherSocketHalf.merge(remainingSocket)
-        smoothSocket = reconnectedSocket.smooth_taubin(n_iter=60, pass_band=0.5)
-        smoothSocket.plot()
+            socket.points[pointToMove] = newPointPosition
+        # reconnectedSocket = otherSocketHalf.merge(remainingSocket)
+        smoothSocket = socket.smooth_taubin(n_iter=60, pass_band=0.5)
         cleanedSocket = smoothSocket.clean()
+        print(f"final time: {time.time()-overallTime}")
         cleanedSocket.plot()
 
         self.finalSocket.DeepCopy(cleanedSocket)
@@ -1881,7 +1862,6 @@ class HandManipulator:
 
             tempMeshList = []
             for jointIdx in range(1, len(self.jointsList[jointListIdx])):
-
                 pointEnd = np.array(list(jointList.keys())[jointIdx].center)
                 pointStart = np.array(list(jointList.keys())[jointIdx - 1].center)
                 vector = pointEnd - pointStart
@@ -1969,7 +1949,6 @@ class HandManipulator:
 
             tempMeshList = []
             for jointIdx in range(1, len(self.jointsList[jointListIdx])):
-
                 pointEnd = np.array(list(jointList.keys())[jointIdx].center)
                 pointStart = np.array(list(jointList.keys())[jointIdx - 1].center)
                 vector = pointEnd - pointStart
