@@ -281,6 +281,8 @@ class GUI(Qt.QMainWindow):
 
     def socketTabUI(self):
         tab = Qt.QWidget()
+        outerBox = Qt.QVBoxLayout()
+
         vbox = Qt.QVBoxLayout()
 
         header = Qt.QLabel("Socket Tools:")
@@ -316,15 +318,36 @@ class GUI(Qt.QMainWindow):
         density.sliderMoved.connect(self.densityChanger)
         vbox.addWidget(density)
 
-        genSocketButton = QtWidgets.QPushButton("Generate Soft Socket")
-        vbox.addWidget(genSocketButton)
-        genSocketButton.clicked.connect(self.generateSocket)
+        outerBox.addLayout(vbox)
 
+        outerBox.addItem(
+            QtWidgets.QSpacerItem(
+                0, 20, QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Minimum
+            )
+        )
+        hLine = QtWidgets.QFrame()
+        hLine.setFrameShape(QtWidgets.QFrame.HLine)
+        hLine.setFrameShadow(QtWidgets.QFrame.Sunken)
+        outerBox.addWidget(hLine)
+        outerBox.addItem(
+            QtWidgets.QSpacerItem(
+                0, 20, QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Minimum
+            )
+        )
+
+        buttonBox = Qt.QVBoxLayout()
+        buttonBox.setAlignment(QtCore.Qt.AlignCenter)
+        genSocketButton = QtWidgets.QPushButton("Generate Soft Socket")
+        buttonBox.addWidget(genSocketButton)
+        genSocketButton.clicked.connect(self.generateSocket)
         testSocketButton = QtWidgets.QPushButton("Generate Hardshell of Socket")
-        vbox.addWidget(testSocketButton)
+        buttonBox.addWidget(testSocketButton)
         testSocketButton.clicked.connect(self.testSocket)
 
-        tab.setLayout(vbox)
+        outerBox.addLayout(buttonBox)
+
+        tab.setLayout(outerBox)
+
         scroll = Qt.QScrollArea()
         scroll.setWidget(tab)
         scroll.setWidgetResizable(True)
@@ -338,7 +361,7 @@ class GUI(Qt.QMainWindow):
         self.checkboxes = {}
         outerBox = Qt.QVBoxLayout()
 
-        splitBox = Qt.QHBoxLayout()
+        splitBox = Qt.QVBoxLayout()
 
         fingerActivationBox = Qt.QVBoxLayout()
         leftHeader = Qt.QLabel("Finger/Joint Selection")
@@ -346,42 +369,31 @@ class GUI(Qt.QMainWindow):
         leftHeader.setStyleSheet("QLabel { font-size: 20px;}")
         fingerActivationBox.addWidget(leftHeader)
 
-        indexBox = Qt.QVBoxLayout()
-        label = Qt.QLabel("Index Finger")
-        indexBox.addWidget(label)
-        for i, sphere in enumerate(self.handManipulator.indexJoints.keys()):
-            cb = QtWidgets.QCheckBox(sphere.name)
-            indexBox.addWidget(cb)
-            cb.stateChanged.connect(self.toggleJointInteraction)
-            self.checkboxes[cb] = sphere
-        indexFrame = Qt.QFrame()
-        indexFrame.setFrameShape(Qt.QFrame.StyledPanel)
-        indexFrame.setStyleSheet("background-color: #aaccbb; border-radius: 10px; ")
-        indexFrame.setLayout(indexBox)
-
-        label = Qt.QLabel("Middle Finger")
-        fingerActivationBox.addWidget(label)
-        for i, sphere in enumerate(self.handManipulator.middleJoints.keys()):
-            cb = QtWidgets.QCheckBox(sphere.name)
-            fingerActivationBox.addWidget(cb)
-            cb.stateChanged.connect(self.toggleJointInteraction)
-            self.checkboxes[cb] = sphere
-
-        label = Qt.QLabel("Third Finger")
-        fingerActivationBox.addWidget(label)
-        for i, sphere in enumerate(self.handManipulator.thirdJoints.keys()):
-            cb = QtWidgets.QCheckBox(sphere.name)
-            fingerActivationBox.addWidget(cb)
-            cb.stateChanged.connect(self.toggleJointInteraction)
-            self.checkboxes[cb] = sphere
-
-        label = Qt.QLabel("Fourth Finger")
-        fingerActivationBox.addWidget(label)
-        for i, sphere in enumerate(self.handManipulator.fourthJoints.keys()):
-            cb = QtWidgets.QCheckBox(sphere.name)
-            fingerActivationBox.addWidget(cb)
-            cb.stateChanged.connect(self.toggleJointInteraction)
-            self.checkboxes[cb] = sphere
+        fingerSubBoxes = Qt.QHBoxLayout()
+        labelNames = ["Index", "Middle", "Third", "Fourth"]
+        fingerNames = [
+            self.handManipulator.indexJoints.keys(),
+            self.handManipulator.middleJoints.keys(),
+            self.handManipulator.thirdJoints.keys(),
+            self.handManipulator.fourthJoints.keys(),
+        ]
+        for i in range(4):
+            box = Qt.QVBoxLayout()
+            label = Qt.QLabel(f"{labelNames[i]} Finger")
+            box.addWidget(label)
+            for j, sphere in enumerate(fingerNames[i]):
+                cb = QtWidgets.QCheckBox(sphere.name)
+                box.addWidget(cb)
+                cb.stateChanged.connect(self.toggleJointInteraction)
+                self.checkboxes[cb] = sphere
+            frame = Qt.QFrame()
+            frame.setFrameShape(Qt.QFrame.StyledPanel)
+            frame.setStyleSheet(
+                f"background-color: rgb(200, {200+i*10}, 200); border-radius: 10px; "
+            )
+            frame.setLayout(box)
+            fingerSubBoxes.addWidget(frame)
+        fingerActivationBox.addLayout(fingerSubBoxes)
 
         fingerSettingsBox = Qt.QVBoxLayout()
         rightHeader = Qt.QLabel("Finger Settings")
@@ -422,28 +434,19 @@ class GUI(Qt.QMainWindow):
         fingerSettingsBox.addWidget(connectorRadius)
         fingerSettingsBox.addStretch()
 
-        fingerActivationBox.addWidget(indexFrame)
-        # left = Qt.QFrame()
-        # left.setFrameShape(Qt.QFrame.StyledPanel)
-        # left.setLayout(fingerActivationBox)
-
-        # right = Qt.QFrame()
-        # right.setFrameShape(Qt.QFrame.StyledPanel)
-        # right.setLayout(fingerSettingsBox)
-
         splitBox.addLayout(fingerActivationBox, 1)
         splitBox.addItem(
             QtWidgets.QSpacerItem(
-                20, 0, QtWidgets.QSizePolicy.Minimum, QtWidgets.QSizePolicy.Expanding
+                0, 20, QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Minimum
             )
         )
-        verticalLine = QtWidgets.QFrame()
-        verticalLine.setFrameShape(QtWidgets.QFrame.VLine)
-        verticalLine.setFrameShadow(QtWidgets.QFrame.Sunken)
-        splitBox.addWidget(verticalLine)
+        hLine = QtWidgets.QFrame()
+        hLine.setFrameShape(QtWidgets.QFrame.HLine)
+        hLine.setFrameShadow(QtWidgets.QFrame.Sunken)
+        splitBox.addWidget(hLine)
         splitBox.addItem(
             QtWidgets.QSpacerItem(
-                20, 0, QtWidgets.QSizePolicy.Minimum, QtWidgets.QSizePolicy.Expanding
+                0, 20, QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Minimum
             )
         )
         splitBox.addLayout(fingerSettingsBox, 1)
@@ -455,6 +458,21 @@ class GUI(Qt.QMainWindow):
         genFingers = QtWidgets.QPushButton("Generate Fingers")
         buttonBox.addWidget(genFingers)
         genFingers.clicked.connect(self.genFingers)
+
+        outerBox.addItem(
+            QtWidgets.QSpacerItem(
+                0, 20, QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Minimum
+            )
+        )
+        hLine = QtWidgets.QFrame()
+        hLine.setFrameShape(QtWidgets.QFrame.HLine)
+        hLine.setFrameShadow(QtWidgets.QFrame.Sunken)
+        outerBox.addWidget(hLine)
+        outerBox.addItem(
+            QtWidgets.QSpacerItem(
+                0, 20, QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Minimum
+            )
+        )
 
         saveFingerPos = QtWidgets.QPushButton("Save Finger Positions")
         buttonBox.addWidget(saveFingerPos)
