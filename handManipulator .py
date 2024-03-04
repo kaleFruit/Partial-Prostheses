@@ -211,7 +211,15 @@ class GUI(Qt.QMainWindow):
         Qt.QMainWindow.__init__(self, parent)
 
         app = Qt.QApplication.instance()
-        app.setStyleSheet("QWidget { font-size: 14px; }")
+        app.setStyleSheet(
+            "QLabel { font-size: 14px; } "
+            "QPushButton {"
+            "border-radius: 10px; "
+            "border: 1px solid #339955;"
+            "width: 200px;"
+            "height: 50px;"
+            "}"
+        )
 
         mainLayout = Qt.QVBoxLayout()
         self.vtkWidget = QVTKRenderWindowInteractor(self)
@@ -274,16 +282,11 @@ class GUI(Qt.QMainWindow):
     def socketTabUI(self):
         tab = Qt.QWidget()
         vbox = Qt.QVBoxLayout()
-        label = Qt.QLabel("Resize Hand:")
-        vbox.addWidget(label)
-        handResizer = QtWidgets.QSlider()
-        handResizer.setGeometry(QtCore.QRect(190, 100, 160, 16))
-        handResizer.setOrientation(QtCore.Qt.Horizontal)
-        handResizer.sliderMoved.connect(self.resizer)
-        vbox.addWidget(handResizer)
 
-        label = Qt.QLabel("Socket Tools:")
-        vbox.addWidget(label)
+        header = Qt.QLabel("Socket Tools:")
+        header.setAlignment(QtCore.Qt.AlignCenter)
+        header.setStyleSheet("QLabel { font-size: 20px;}")
+        vbox.addWidget(header)
         cb = QtWidgets.QCheckBox("Enable/Disable")
         vbox.addWidget(cb)
         cb.stateChanged.connect(self.toggleSocket)
@@ -313,11 +316,11 @@ class GUI(Qt.QMainWindow):
         density.sliderMoved.connect(self.densityChanger)
         vbox.addWidget(density)
 
-        genSocketButton = QtWidgets.QPushButton("Generate Socket")
+        genSocketButton = QtWidgets.QPushButton("Generate Soft Socket")
         vbox.addWidget(genSocketButton)
         genSocketButton.clicked.connect(self.generateSocket)
 
-        testSocketButton = QtWidgets.QPushButton("test Socket")
+        testSocketButton = QtWidgets.QPushButton("Generate Hardshell of Socket")
         vbox.addWidget(testSocketButton)
         testSocketButton.clicked.connect(self.testSocket)
 
@@ -325,7 +328,7 @@ class GUI(Qt.QMainWindow):
         scroll = Qt.QScrollArea()
         scroll.setWidget(tab)
         scroll.setWidgetResizable(True)
-        scroll.setFixedHeight(400)
+        scroll.setFixedHeight(500)
 
         return scroll
 
@@ -334,23 +337,29 @@ class GUI(Qt.QMainWindow):
 
         self.checkboxes = {}
         outerBox = Qt.QVBoxLayout()
+
         splitBox = Qt.QHBoxLayout()
 
         fingerActivationBox = Qt.QVBoxLayout()
-        label = Qt.QLabel("Finger/Joint Selection")
-        label.setAlignment(QtCore.Qt.AlignCenter)
-        label.setFont(Qt.QFont("Arial", 30))
+        leftHeader = Qt.QLabel("Finger/Joint Selection")
+        leftHeader.setAlignment(QtCore.Qt.AlignCenter)
+        leftHeader.setStyleSheet("QLabel { font-size: 20px;}")
+        fingerActivationBox.addWidget(leftHeader)
 
-        fingerActivationBox.addWidget(label)
-        label = Qt.QLabel("Index:")
-        fingerActivationBox.addWidget(label)
+        indexBox = Qt.QVBoxLayout()
+        label = Qt.QLabel("Index Finger")
+        indexBox.addWidget(label)
         for i, sphere in enumerate(self.handManipulator.indexJoints.keys()):
             cb = QtWidgets.QCheckBox(sphere.name)
-            fingerActivationBox.addWidget(cb)
+            indexBox.addWidget(cb)
             cb.stateChanged.connect(self.toggleJointInteraction)
             self.checkboxes[cb] = sphere
+        indexFrame = Qt.QFrame()
+        indexFrame.setFrameShape(Qt.QFrame.StyledPanel)
+        indexFrame.setStyleSheet("background-color: #aaccbb; border-radius: 10px; ")
+        indexFrame.setLayout(indexBox)
 
-        label = Qt.QLabel("Middle:")
+        label = Qt.QLabel("Middle Finger")
         fingerActivationBox.addWidget(label)
         for i, sphere in enumerate(self.handManipulator.middleJoints.keys()):
             cb = QtWidgets.QCheckBox(sphere.name)
@@ -358,7 +367,7 @@ class GUI(Qt.QMainWindow):
             cb.stateChanged.connect(self.toggleJointInteraction)
             self.checkboxes[cb] = sphere
 
-        label = Qt.QLabel("Third:")
+        label = Qt.QLabel("Third Finger")
         fingerActivationBox.addWidget(label)
         for i, sphere in enumerate(self.handManipulator.thirdJoints.keys()):
             cb = QtWidgets.QCheckBox(sphere.name)
@@ -366,7 +375,7 @@ class GUI(Qt.QMainWindow):
             cb.stateChanged.connect(self.toggleJointInteraction)
             self.checkboxes[cb] = sphere
 
-        label = Qt.QLabel("Fourth:")
+        label = Qt.QLabel("Fourth Finger")
         fingerActivationBox.addWidget(label)
         for i, sphere in enumerate(self.handManipulator.fourthJoints.keys()):
             cb = QtWidgets.QCheckBox(sphere.name)
@@ -375,48 +384,88 @@ class GUI(Qt.QMainWindow):
             self.checkboxes[cb] = sphere
 
         fingerSettingsBox = Qt.QVBoxLayout()
+        rightHeader = Qt.QLabel("Finger Settings")
+        rightHeader.setAlignment(QtCore.Qt.AlignCenter)
+        rightHeader.setStyleSheet("QLabel { font-size: 20px;}")
+        fingerSettingsBox.addWidget(rightHeader)
 
         fingerSettingsBox.addWidget(Qt.QLabel("Set Finger Width:"))
-        fingerWidth = Qt.QLineEdit()
-        fingerWidth.setValidator(Qt.QDoubleValidator(0.99, 50.99, 2))
+        fingerWidth = Qt.QDoubleSpinBox()
+        fingerWidth.setDecimals(1)
+        fingerWidth.setSingleStep(0.1)
+        fingerWidth.setValue(12)
         fingerWidth.textChanged.connect(self.setFingerWidth)
         fingerSettingsBox.addWidget(fingerWidth)
 
         fingerSettingsBox.addWidget(Qt.QLabel("Set Finger Height:"))
-        fingerHeight = Qt.QLineEdit()
-        fingerHeight.setValidator(Qt.QDoubleValidator(0.99, 50.99, 2))
+        fingerHeight = Qt.QDoubleSpinBox()
+        fingerHeight.setDecimals(1)
+        fingerHeight.setSingleStep(0.1)
+        fingerHeight.setValue(12)
         fingerHeight.textChanged.connect(self.setFingerHeight)
         fingerSettingsBox.addWidget(fingerHeight)
 
         fingerSettingsBox.addWidget(Qt.QLabel("Set Connector Thickness:"))
-        connectorThickness = Qt.QLineEdit()
-        connectorThickness.setValidator(Qt.QDoubleValidator(0.99, 50.99, 2))
+        connectorThickness = Qt.QDoubleSpinBox()
+        connectorThickness.setDecimals(1)
+        connectorThickness.setSingleStep(0.1)
+        connectorThickness.setValue(12)
         connectorThickness.textChanged.connect(self.setConnectorThickness)
         fingerSettingsBox.addWidget(connectorThickness)
 
         fingerSettingsBox.addWidget(Qt.QLabel("Set Connector End Radius:"))
-        connectorRadius = Qt.QLineEdit()
-        connectorRadius.setValidator(Qt.QDoubleValidator(0.99, 50.99, 2))
+        connectorRadius = Qt.QDoubleSpinBox()
+        connectorRadius.setDecimals(1)
+        connectorRadius.setSingleStep(0.1)
+        connectorRadius.setValue(12)
         connectorRadius.textChanged.connect(self.setConnectorRadius)
         fingerSettingsBox.addWidget(connectorRadius)
+        fingerSettingsBox.addStretch()
+
+        fingerActivationBox.addWidget(indexFrame)
+        # left = Qt.QFrame()
+        # left.setFrameShape(Qt.QFrame.StyledPanel)
+        # left.setLayout(fingerActivationBox)
+
+        # right = Qt.QFrame()
+        # right.setFrameShape(Qt.QFrame.StyledPanel)
+        # right.setLayout(fingerSettingsBox)
+
+        splitBox.addLayout(fingerActivationBox, 1)
+        splitBox.addItem(
+            QtWidgets.QSpacerItem(
+                20, 0, QtWidgets.QSizePolicy.Minimum, QtWidgets.QSizePolicy.Expanding
+            )
+        )
+        verticalLine = QtWidgets.QFrame()
+        verticalLine.setFrameShape(QtWidgets.QFrame.VLine)
+        verticalLine.setFrameShadow(QtWidgets.QFrame.Sunken)
+        splitBox.addWidget(verticalLine)
+        splitBox.addItem(
+            QtWidgets.QSpacerItem(
+                20, 0, QtWidgets.QSizePolicy.Minimum, QtWidgets.QSizePolicy.Expanding
+            )
+        )
+        splitBox.addLayout(fingerSettingsBox, 1)
 
         outerBox.addLayout(splitBox)
-        splitBox.addLayout(fingerActivationBox)
-        splitBox.addLayout(fingerSettingsBox)
 
+        buttonBox = Qt.QVBoxLayout()
+        buttonBox.setAlignment(QtCore.Qt.AlignCenter)
         genFingers = QtWidgets.QPushButton("Generate Fingers")
-        outerBox.addWidget(genFingers)
+        buttonBox.addWidget(genFingers)
         genFingers.clicked.connect(self.genFingers)
 
         saveFingerPos = QtWidgets.QPushButton("Save Finger Positions")
-        outerBox.addWidget(saveFingerPos)
+        buttonBox.addWidget(saveFingerPos)
         saveFingerPos.clicked.connect(self.saveFingerPositions)
 
+        outerBox.addLayout(buttonBox)
         tab.setLayout(outerBox)
         scroll2 = Qt.QScrollArea()
         scroll2.setWidget(tab)
         scroll2.setWidgetResizable(True)
-        scroll2.setFixedHeight(400)
+        scroll2.setFixedHeight(500)
 
         return scroll2
 
@@ -431,9 +480,6 @@ class GUI(Qt.QMainWindow):
 
     def saveFingerPositions(self):
         self.handManipulator.saveFingerPositions()
-
-    def resizer(self, p):
-        self.handMesh.resize(p)
 
     def densityChanger(self, p):
         self.handMesh.densityChange(p)
@@ -479,16 +525,16 @@ class GUI(Qt.QMainWindow):
         )
 
     def setFingerWidth(self, val):
-        self.handManipulator.setFingerWidth(val)
+        self.handManipulator.setFingerWidth(float(val))
 
     def setFingerHeight(self, val):
-        self.handManipulator.setFingerHeight(val)
+        self.handManipulator.setFingerHeight(float(val))
 
     def setConnectorThickness(self, val):
-        self.handManipulator.setConnectorThickness(val)
+        self.handManipulator.setConnectorThickness(float(val))
 
     def setConnectorRadius(self, val):
-        self.handManipulator.setConnectorRadius(val)
+        self.handManipulator.setConnectorRadius(float(val))
 
 
 class HandMesh:
@@ -1765,8 +1811,9 @@ class HandManipulator:
                 * n
             )
 
-            clickedSphere = list(self.boneReference.keys())[self.pickedActor.idTag]
-            self.maintainFingerProportions(clickedSphere, newPoint)
+            if hasattr(self.pickedActor, "idTag"):
+                clickedSphere = list(self.boneReference.keys())[self.pickedActor.idTag]
+                self.maintainFingerProportions(clickedSphere, newPoint)
             self.renderWindow.Render()
 
     def maintainFingerProportions(self, clickedSphere, newPoint):
