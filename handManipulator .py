@@ -539,7 +539,9 @@ class GUI(Qt.QMainWindow):
         writer.Write()
 
         self.handMesh.genHandPortion(
-            self.handManipulator.getJoints(), self.handManipulator.getFingerMeshes()
+            self.handManipulator.getJoints(),
+            self.handManipulator.getFingerMeshes(),
+            self.handManipulator.getFingerInfo(),
         )
 
     def setFingerWidth(self, val):
@@ -1370,14 +1372,212 @@ class HandMesh:
         actor.GetProperty().SetColor(r, g, b)
         self.renderWindow.Render()
 
-    def genHandPortion(self, carpals, fingerMeshes):
+    def createBaseConnector(
+        self, baseRadius, connectorWidth, connectorHeight, pieceHeight
+    ):
+        resolution = 30
+        connectorWidth /= 2
+        connectorHeight += 2  # this is basically the minor axiso f the uper ellipse
+        pieceHeight += 3
+        bottomPoints = []
+        thetaInterval = 2 * np.pi / resolution
+        for i in range(resolution):
+            bottomPoints.append(
+                (
+                    baseRadius * np.cos(thetaInterval * i),
+                    baseRadius * np.sin(thetaInterval * i),
+                    pieceHeight,
+                )
+            )
+        bottomPoints.append((0, 0, pieceHeight))
+        topPoints = []
+        for i in range(resolution):
+            topPoints.append(
+                (
+                    connectorWidth * np.cos(thetaInterval * i),
+                    connectorHeight * np.sin(thetaInterval * i),
+                    0,
+                )
+            )
+        topPoints.append((0, 0, 0))
+        totalFaces = []
+        for i in range(len(bottomPoints) - 1):
+            totalFaces.append(
+                (3, len(bottomPoints) - 1, i, (i + 1) % (len(bottomPoints) - 1))
+            )
+        bottomPoints.extend(topPoints)
+        offset = len(topPoints)
+        for i in range(len(topPoints) - 1):
+            totalFaces.append(
+                (
+                    3,
+                    len(topPoints) - 1 + offset,
+                    i + offset,
+                    (i + 1) % (len(topPoints) - 1) + offset,
+                )
+            )
+        for i in range(resolution):
+            totalFaces.append((3, i, (i + 1) % resolution, i + offset))
+            totalFaces.append(
+                (3, i + offset, (i + 1) % resolution + offset, (i + 1) % resolution)
+            )
+        mesh = pv.PolyData(bottomPoints, totalFaces).triangulate()
+        return mesh.compute_normals(consistent_normals=True, auto_orient_normals=True)
+
+    def createConnectorHalf(
+        self, endRadius, length, thickness, resolutionEnd=8, width=6
+    ):
+        vertices = []
+        totalFaces = []
+        vertices.append((0, thickness / 2, 0))
+        vertices.append((0, thickness / 2, length / 2))
+        vertices.append((0, -thickness / 2, length / 2))
+        vertices.append((0, -thickness / 2, 0))
+
+        totalFaces.append((3, 0, 1, 2))
+        totalFaces.append((3, 2, 3, 0))
+
+        currTheta = np.pi - np.arcsin(thickness / 2 / endRadius)
+        thetaInterval = 2 * currTheta / (resolutionEnd + 1)
+        currTheta -= thetaInterval
+        for _ in range(resolutionEnd):
+            vertices.append(
+                (
+                    0,
+                    endRadius * np.sin(currTheta),
+                    endRadius * np.cos(currTheta) + length / 2 + endRadius,
+                )
+            )
+            currTheta -= thetaInterval
+        vertices.append((0, 0, length / 2 + endRadius))
+        offset = 4
+        for i in range(resolutionEnd):
+            totalFaces.append((3, i + offset, len(vertices) - 1, i + 1 + offset))
+
+        totalFaces.append((3, 1, len(vertices) - 1, 2))
+        totalFaces.append((3, 1, len(vertices) - 1, 4))
+        totalFaces.append((3, 4 + resolutionEnd - 1, len(vertices) - 1, 2))
+
+        return vertices, totalFaces
+
+    def createFullConnector(self, endRadius, length, thickness, resolutionEnd, width):
+        length = length / 2 + 1
+        half1Vert, half1Face = self.createConnectorHalf(
+            endRadius=endRadius,
+            length=length,
+            thickness=thickness,
+            resolutionEnd=resolutionEnd,
+        )
+        half2Vert, half2Face = self.createConnectorHalf(
+            endRadius=endRadius,
+            length=length,
+            thickness=thickness,
+            resolutionEnd=resolutionEnd,
+        )
+        for i, vert in enumerate(half2Vert):
+            half2Vert[i] = (vert[0] - width / 2, vert[1], vert[2])
+        for i, vert in enumerate(half1Vert):
+            half1Vert[i] = (vert[0] + width / 2, vert[1], vert[2])
+        offset = len(half1Vert)
+        for i, face in enumerate(half2Face):
+            half2Face[i] = (3, face[1] + offset, face[2] + offset, face[3] + offset)
+        totalVerts = []
+        totalFaces = []
+        totalVerts.extend(half1Vert)
+        totalVerts.extend(half2Vert)
+        totalFaces.extend(half1Face)
+        totalFaces.extend(half2Face)
+
+        totalFaces.append((3, 0, 1, offset))
+        totalFaces.append((3, 1, offset + 1, offset))
+
+        totalFaces.append((3, 2, 3, offset + 3))
+        totalFaces.append((3, 2, offset + 2, offset + 3))
+
+        totalFaces.append((3, 0, offset, 3))
+        totalFaces.append((3, offset + 3, offset, 3))
+
+        for i in range(resolutionEnd - 1):
+            totalFaces.append((3, i + 4, i + 5, i + 4 + offset))
+            totalFaces.append((3, i + 4 + offset, i + 5 + offset, i + 5))
+
+        totalFaces.append((3, 1, 1 + offset, 4 + offset))
+        totalFaces.append((3, 4 + offset, 4, 1))
+
+        totalFaces.append((3, 2, 2 + offset, 3 + offset + resolutionEnd))
+        totalFaces.append((3, 3 + offset + resolutionEnd, 3 + resolutionEnd, 2))
+
+        for i, point in enumerate(totalVerts):
+            totalVerts[i] = point + np.array([0, 0, -1])
+
+        mesh = (
+            pv.PolyData(totalVerts, totalFaces)
+            .compute_normals(
+                non_manifold_traversal=False,
+                consistent_normals=True,
+                auto_orient_normals=True,
+            )
+            .clean()
+            .triangulate()
+        )
+        return mesh
+
+    def createConnectionBetweenFingerAndSocket(
+        self,
+        baseRadius,
+        connectorWidth,
+        connectorThickness,
+        connectorLength,
+        connectorRadius,
+    ):
+        resolutionEnd = 12
+        base = self.createBaseConnector(
+            baseRadius=baseRadius,
+            connectorWidth=connectorWidth,
+            connectorHeight=connectorThickness,
+            pieceHeight=connectorLength,
+        )
+        connector = self.createFullConnector(
+            width=connectorWidth * 3,
+            endRadius=connectorRadius,
+            length=connectorLength,
+            thickness=connectorThickness,
+            resolutionEnd=resolutionEnd,
+        )
+        boolean = vtkPolyDataBooleanFilter()
+        boolean.SetInputData(0, base)
+        boolean.SetInputData(1, connector)
+        boolean.SetOperModeToDifference()
+        boolean.Update()
+        return pv.wrap(boolean.GetOutput())
+
+    def moveAlignMesh(self, mesh, newCenter, newAlignVector, newNormal):
+        otherNormal = np.cross(newAlignVector, newNormal)
+        v1 = otherNormal / np.linalg.norm(otherNormal)
+        v2 = newNormal / np.linalg.norm(newNormal) * -1
+        v3 = newAlignVector / np.linalg.norm(newAlignVector)
+        if (
+            not np.allclose(np.dot(v1, v2), 0)
+            or not np.allclose(np.dot(v1, v3), 0)
+            or not np.allclose(np.dot(v2, v3), 0)
+        ):
+            raise ValueError("Basis vectors are not orthogonal")
+        transformation_matrix = np.column_stack((v1, v2, v3))
+        finalTransformation = np.eye(4)
+        finalTransformation[0:3, 0:3] = transformation_matrix
+        mesh = mesh.transform(finalTransformation)
+        translation_vector = newCenter - np.array([0, 0, 0], dtype=float)
+        mesh = mesh.translate(translation_vector)
+        return mesh
+
+    def genHandPortion(self, carpals, fingerMeshes, fingerInfo):
         handMesh = pv.wrap(self.actor.GetMapper().GetInput())
         jointRegionalPointIDXs = []
 
         socket = pv.wrap(self.finalSocket)
         newProportionalPositions = {}
 
-        initRadius = 12
+        initRadius = 11
         layers = 5
         overallTime = time.time()
         for i, carpal in enumerate(carpals):
@@ -1456,6 +1656,7 @@ class HandMesh:
         ):
             distances = []
             diskOfPoints = []
+            initDistances = []
             for idx in pointIDs:
                 p = np.array(socket.points[idx])
                 u = p - np.array(jointOrigin)
@@ -1467,10 +1668,12 @@ class HandMesh:
                         jointRegionalPointIDXs[j].remove(idx)
                 distances.append(np.linalg.norm(newPos - p))
                 diskOfPoints.append(newPos)
-            circumferenceOfPoints = [[], []]
+                initDistances.append(np.linalg.norm(newPos - np.array(jointOrigin)))
+            circumferenceOfPoints = [[], [], []]
             for pair in ConvexHull(diskOfPoints, qhull_options="QJ").vertices:
                 circumferenceOfPoints[0].append(diskOfPoints[pair])
                 circumferenceOfPoints[1].append(distances[pair])
+                circumferenceOfPoints[2].append(initDistances[pair])
             pointsToPlot = circumferenceOfPoints[0]
             pls = vtk.vtkPoints()
             for pt in pointsToPlot:
@@ -1491,10 +1694,16 @@ class HandMesh:
             for idx in jointRegionalPointIDXs[jointIdx]:
                 p = np.array(socket.points[idx])
                 u = p - np.array(jointOrigin)
-                _, closestPointIdx = tree.query(p)
-                distance = circumferenceOfPoints[1][closestPointIdx]
+
                 n = np.array(fingerVector) / np.linalg.norm(np.array(fingerVector))
-                factor = distance / ((np.linalg.norm(u) / distance) ** 2)
+                projectedPos = p - n * np.dot(u, n)
+                distance2 = np.linalg.norm(projectedPos - np.array(jointOrigin))
+
+                _, closestPointIdx = tree.query(p)
+                intensity = circumferenceOfPoints[1][closestPointIdx]
+                distance1 = circumferenceOfPoints[2][closestPointIdx]
+                # factor = distance / ((np.linalg.norm(u) / distance) ** 2)
+                factor = intensity * (distance1**2) / (distance2**2)
                 newPos = p + n * factor
                 if idx in newProportionalPositions:
                     newProportionalPositions[idx] = (
@@ -1503,11 +1712,15 @@ class HandMesh:
                 else:
                     newProportionalPositions[idx] = newPos
 
+        conjoiningMeshes = []
         for k, carpal in enumerate(carpals):
+            origin = carpal["center"] - carpal["normal"] / np.linalg.norm(
+                carpal["normal"]
+            ) * (fingerInfo["connectorLength"] + 3)
             listOfIds = selectPoints(
                 carpalOrigin=carpal["center"],
                 carpalVector=carpal["normal"],
-                radius=initRadius,
+                radius=initRadius - 0.4,
                 color=(0.5, 1, 1),
                 size=10,
             )
@@ -1516,19 +1729,42 @@ class HandMesh:
                 jointIdx=k,
                 totalJointIds=len(carpals),
                 fingerVector=carpal["normal"],
-                jointOrigin=carpal["center"],
+                jointOrigin=origin,
             )
             proportionallyMovePoints(
                 fingerVector=carpal["normal"],
-                jointOrigin=carpal["center"],
+                jointOrigin=origin,
                 circumferenceOfPoints=circumferenceOfPoints,
                 jointIdx=k,
             )
+            connectorPiece = self.createConnectionBetweenFingerAndSocket(
+                baseRadius=initRadius,
+                connectorWidth=fingerInfo["connectorWidth"],
+                connectorThickness=fingerInfo["connectorThickness"],
+                connectorLength=fingerInfo["connectorLength"],
+                connectorRadius=fingerInfo["connectorRadius"],
+            )
+
+            carpalNeighborIndex = k + 1
+            if k == len(carpals) - 1:
+                carpalNeighborIndex = k - 1
+            crossedBiNormal = np.cross(
+                carpal["normal"], carpals[carpalNeighborIndex]["normal"]
+            )
+            connectorPieceLocation = carpal["center"]
+            connectorPiece = self.moveAlignMesh(
+                connectorPiece,
+                connectorPieceLocation,
+                -1 * carpal["normal"],
+                -1 * crossedBiNormal,
+            )
+            conjoiningMeshes.append(connectorPiece)
 
         for pointToMove, newPointPosition in newProportionalPositions.items():
             socket.points[pointToMove] = newPointPosition
-        # reconnectedSocket = otherSocketHalf.merge(remainingSocket)
-        smoothSocket = socket.smooth_taubin(n_iter=60, pass_band=0.5)
+        # for mesh in conjoiningMeshes:
+        #     socket = socket.merge(mesh)
+        smoothSocket = socket.smooth_taubin(n_iter=100, pass_band=0.5)
         cleanedSocket = smoothSocket.clean()
         print(f"final time: {time.time()-overallTime}")
         cleanedSocket.plot()
@@ -1550,6 +1786,11 @@ class HandMesh:
 
         writer.SetFileName("imageAnalysisGeneration/socketStruct.stl")
         writer.SetInputData(self.finalSocket)
+        writer.Write()
+
+        writer = vtk.vtkSTLWriter()
+        writer.SetFileName("imageAnalysisGeneration/connectorSocketToFinger.stl")
+        writer.SetInputData(conjoiningMeshes[0])
         writer.Write()
 
 
@@ -1927,6 +2168,14 @@ class HandManipulator:
                 fingerMeshes.append(thing.GetMapper().GetInput())
         return fingerMeshes
 
+    def getFingerInfo(self):
+        return {
+            "connectorWidth": self.fingerWidth,
+            "connectorThickness": self.connectorThickness,
+            "connectorLength": 5.8,
+            "connectorRadius": self.connectorRadius,
+        }
+
     def getConnectors(self):
         fingerConnectors = []
         for finger in self.fingerConnectorActors:
@@ -1939,7 +2188,6 @@ class HandManipulator:
         for jointListIdx in range(len(self.jointsList)):
             start = time.time()
             jointList = self.jointsList[jointListIdx]
-            print(list(jointList.keys()))
             length = np.linalg.norm(
                 np.array(list(jointList.keys())[len(jointList.keys()) - 1].center)
                 - np.array(list(jointList.keys())[0].center)
