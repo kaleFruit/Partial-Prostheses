@@ -1577,8 +1577,8 @@ class HandMesh:
         socket = pv.wrap(self.finalSocket)
         newProportionalPositions = {}
 
-        initRadius = 11
-        layers = 5
+        initRadius = 9.5
+
         overallTime = time.time()
         for i, carpal in enumerate(carpals):
             start = time.time()
@@ -1593,16 +1593,31 @@ class HandMesh:
             selectedIds = socket.select_enclosed_points(selectingSphere)[
                 "SelectedPoints"
             ].view(bool)
-            counter = 0
-            threshold = 5e-1
+
+            threshold = 70 * np.pi / 180
+            socket = socket.compute_normals()
             for idx in range(len(selectedIds)):
                 if selectedIds[idx]:
                     point = socket.points[idx]
-                    closestPoint = handMesh.points[handMesh.find_closest_point(point)]
-                    distance = np.linalg.norm(np.array(point) - np.array(closestPoint))
-                    if distance >= threshold:
+                    u = socket.point_normals[idx]
+                    v = np.array(carpal["normal"])
+                    angle = np.arccos(
+                        np.dot(u, v) / (np.linalg.norm(u) * np.linalg.norm(v))
+                    )
+                    if angle < threshold:
                         tempIDList.append(idx)
-                        counter += 1
+            print("normaal", np.array(carpal["normal"]))
+            pointsToPlot = socket.extract_points(
+                tempIDList, adjacent_cells=False, include_cells=True
+            ).points
+            pls = vtk.vtkPoints()
+            for pt in pointsToPlot:
+                pls.InsertNextPoint(pt)
+            fd = vtk.vtkPolyData()
+            fd.SetPoints(pls)
+            self.plotPointCloud(fd, color=(0.5, 0.2, 1))
+            self.renderWindow.Render()
+
             jointRegionalPointIDXs.append(tempIDList)
 
             file1 = open("strengthAnalysis/connectiveGenerationTimes.txt", "a")
@@ -1628,12 +1643,16 @@ class HandMesh:
                 "SelectedPoints"
             ].view(bool)
             extractedPointIdx = []
+            threshold = 70 * np.pi / 180
             for idx in range(len(selectedIds)):
                 if selectedIds[idx]:
                     point = socket.points[idx]
-                    closestPoint = handMesh.points[handMesh.find_closest_point(point)]
-                    distance = np.linalg.norm(np.array(point) - np.array(closestPoint))
-                    if distance >= threshold:
+                    u = socket.point_normals[idx]
+                    v = np.array(carpal["normal"])
+                    angle = np.arccos(
+                        np.dot(u, v) / (np.linalg.norm(u) * np.linalg.norm(v))
+                    )
+                    if angle < threshold:
                         extractedPointIdx.append(idx)
             pointsToPlot = socket.extract_points(
                 selectedIds, adjacent_cells=False, include_cells=True
@@ -1713,6 +1732,7 @@ class HandMesh:
                     newProportionalPositions[idx] = newPos
 
         conjoiningMeshes = []
+
         for k, carpal in enumerate(carpals):
             origin = carpal["center"] - carpal["normal"] / np.linalg.norm(
                 carpal["normal"]
