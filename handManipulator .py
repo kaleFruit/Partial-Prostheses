@@ -1353,9 +1353,6 @@ class HandMesh:
         cleaner.Update()
         finalData = cleaner.GetOutput()
 
-        # self.plotVectors(finalData, 25, 20, 200, 100)
-        # print(self.check_constraints(finalData))
-
         return finalData
 
     def plotPointCloud(self, polydata, color=(1, 1, 1), size=5):
@@ -1544,12 +1541,15 @@ class HandMesh:
             thickness=connectorThickness,
             resolutionEnd=resolutionEnd,
         )
+
         boolean = vtkPolyDataBooleanFilter()
         boolean.SetInputData(0, base)
         boolean.SetInputData(1, connector)
         boolean.SetOperModeToDifference()
         boolean.Update()
-        return pv.wrap(boolean.GetOutput())
+        finalMesh = pv.wrap(boolean.GetOutput())
+
+        return finalMesh
 
     def moveAlignMesh(self, mesh, newCenter, newAlignVector, newNormal):
         otherNormal = np.cross(newAlignVector, newNormal)
@@ -1578,6 +1578,7 @@ class HandMesh:
         newProportionalPositions = {}
 
         initRadius = 9.5
+        layers = 5
 
         overallTime = time.time()
         for i, carpal in enumerate(carpals):
@@ -1606,7 +1607,6 @@ class HandMesh:
                     )
                     if angle < threshold:
                         tempIDList.append(idx)
-            print("normaal", np.array(carpal["normal"]))
             pointsToPlot = socket.extract_points(
                 tempIDList, adjacent_cells=False, include_cells=True
             ).points
@@ -1744,6 +1744,7 @@ class HandMesh:
                 color=(0.5, 1, 1),
                 size=10,
             )
+
             circumferenceOfPoints = moveSelectedPointsToJoints(
                 pointIDs=listOfIds,
                 jointIdx=k,
@@ -1751,12 +1752,14 @@ class HandMesh:
                 fingerVector=carpal["normal"],
                 jointOrigin=origin,
             )
+
             proportionallyMovePoints(
                 fingerVector=carpal["normal"],
                 jointOrigin=origin,
                 circumferenceOfPoints=circumferenceOfPoints,
                 jointIdx=k,
             )
+
             connectorPiece = self.createConnectionBetweenFingerAndSocket(
                 baseRadius=initRadius,
                 connectorWidth=fingerInfo["connectorWidth"],
@@ -1782,9 +1785,9 @@ class HandMesh:
 
         for pointToMove, newPointPosition in newProportionalPositions.items():
             socket.points[pointToMove] = newPointPosition
-        # for mesh in conjoiningMeshes:
-        #     socket = socket.merge(mesh)
-        smoothSocket = socket.smooth_taubin(n_iter=100, pass_band=0.5)
+        for mesh in conjoiningMeshes:
+            socket = socket.merge(mesh)
+        smoothSocket = socket.smooth_taubin(n_iter=10, pass_band=0.5)
         cleanedSocket = smoothSocket.clean()
         print(f"final time: {time.time()-overallTime}")
         cleanedSocket.plot()
