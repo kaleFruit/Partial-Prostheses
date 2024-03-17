@@ -826,58 +826,6 @@ class HandMesh:
         actor.GetProperty().SetColor(r, g, b)
         self.renderWindow.Render()
 
-    def createBaseConnector(
-        self, baseRadius, connectorWidth, connectorHeight, pieceHeight
-    ):
-        resolution = 30
-        connectorWidth /= 2
-        connectorHeight += 2  # this is basically the minor axiso f the uper ellipse
-        pieceHeight += 3
-        bottomPoints = []
-        thetaInterval = 2 * np.pi / resolution
-        for i in range(resolution):
-            bottomPoints.append(
-                (
-                    baseRadius * np.cos(thetaInterval * i),
-                    baseRadius * np.sin(thetaInterval * i),
-                    pieceHeight,
-                )
-            )
-        bottomPoints.append((0, 0, pieceHeight))
-        topPoints = []
-        for i in range(resolution):
-            topPoints.append(
-                (
-                    connectorWidth * np.cos(thetaInterval * i),
-                    connectorHeight * np.sin(thetaInterval * i),
-                    0,
-                )
-            )
-        topPoints.append((0, 0, 0))
-        totalFaces = []
-        for i in range(len(bottomPoints) - 1):
-            totalFaces.append(
-                (3, len(bottomPoints) - 1, i, (i + 1) % (len(bottomPoints) - 1))
-            )
-        bottomPoints.extend(topPoints)
-        offset = len(topPoints)
-        for i in range(len(topPoints) - 1):
-            totalFaces.append(
-                (
-                    3,
-                    len(topPoints) - 1 + offset,
-                    i + offset,
-                    (i + 1) % (len(topPoints) - 1) + offset,
-                )
-            )
-        for i in range(resolution):
-            totalFaces.append((3, i, (i + 1) % resolution, i + offset))
-            totalFaces.append(
-                (3, i + offset, (i + 1) % resolution + offset, (i + 1) % resolution)
-            )
-        mesh = pv.PolyData(bottomPoints, totalFaces).triangulate()
-        return mesh.compute_normals(consistent_normals=True, auto_orient_normals=True)
-
     def createConnectorHalf(
         self, endRadius, length, thickness, resolutionEnd=8, width=6
     ):
@@ -985,28 +933,16 @@ class HandMesh:
         connectorRadius,
     ):
         resolutionEnd = 12
-        base = self.createBaseConnector(
-            baseRadius=baseRadius,
-            connectorWidth=connectorWidth,
-            connectorHeight=connectorThickness,
-            pieceHeight=connectorLength,
-        )
+    
         connector = self.createFullConnector(
-            width=connectorWidth * 3,
+            width=connectorWidth + 5,
             endRadius=connectorRadius,
             length=connectorLength,
             thickness=connectorThickness,
             resolutionEnd=resolutionEnd,
         )
 
-        boolean = vtkPolyDataBooleanFilter()
-        boolean.SetInputData(0, base)
-        boolean.SetInputData(1, connector)
-        boolean.SetOperModeToDifference()
-        boolean.Update()
-        finalMesh = pv.wrap(boolean.GetOutput())
-
-        return finalMesh
+        return connector
 
     def moveAlignMesh(self, mesh, newCenter, newAlignVector, newNormal):
         otherNormal = np.cross(newAlignVector, newNormal)
@@ -1027,15 +963,42 @@ class HandMesh:
         mesh = mesh.translate(translation_vector)
         return mesh
 
+    def removeNonManifoldPartsOfMesh(self, mesh):
+        nonManifoldEdges = mesh.extract_feature_edges(
+            boundary_edges=True,
+            non_manifold_edges=True,
+            feature_edges=False,
+            manifold_edges=False,
+        )
+        manifoldEdges = mesh.extract_feature_edges(
+            boundary_edges=False,
+            non_manifold_edges=False,
+            feature_edges=False,
+            manifold_edges=True,
+        )
+
+        og = mesh.points
+        extracted = nonManifoldEdges.points
+        pointMapping = {tuple(point): i for i, point in enumerate(og)}
+        remapped1 = set([pointMapping[tuple(point)] for point in extracted])
+
+        extracted2 = manifoldEdges.points
+        remapped2 = set([pointMapping[tuple(point)] for point in extracted2])
+        exclusiveNonManifoldPointIDs = list(remapped1.difference(remapped2))
+        fixedMesh, _ = mesh.remove_points(exclusiveNonManifoldPointIDs)
+        return fixedMesh
+
     def genHandPortion(self, carpals, fingerMeshes, fingerInfo):
         handMesh = pv.wrap(self.actor.GetMapper().GetInput())
         jointRegionalPointIDXs = []
 
         socket = pv.wrap(self.finalSocket)
+        socket = self.removeNonManifoldPartsOfMesh(socket)
+
         newProportionalPositions = {}
 
-        initRadius = 9.5
-        layers = 5
+        initRadius = 8
+        layers = 10
 
         overallTime = time.time()
         for i, carpal in enumerate(carpals):
@@ -1194,6 +1157,7 @@ class HandMesh:
             origin = carpal["center"] - carpal["normal"] / np.linalg.norm(
                 carpal["normal"]
             ) * (fingerInfo["connectorLength"] + 3)
+            origin = carpal["center"]
             listOfIds = selectPoints(
                 carpalOrigin=carpal["center"],
                 carpalVector=carpal["normal"],
@@ -1239,13 +1203,50 @@ class HandMesh:
                 -1 * crossedBiNormal,
             )
             conjoiningMeshes.append(connectorPiece)
+            cylinder = pv.Cylinder(
+                center=connectorPieceLocation
+                - (fingerInfo["connectorLength"] + 1)
+                * carpal["normal"]
+                / np.linalg.norm(carpal["normal"]),
+                direction=crossedBiNormal,
+                radius=1,
+                height=initRadius * 3,
+            )
+            conjoiningMeshes.append(cylinder)
+
+            if k == len(carpals) - 1:
+                crossedBiNormal *= -1
+
+            angledVector = carpal["normal"] / np.linalg.norm(
+                carpal["normal"]
+            ) - crossedBiNormal / np.linalg.norm(crossedBiNormal)
+            angledVector = angledVector / np.linalg.norm(angledVector)
+
+            wedge = pv.Cylinder(
+                center=connectorPieceLocation
+                - (fingerInfo["connectorLength"] + 1)
+                * crossedBiNormal
+                / np.linalg.norm(crossedBiNormal),
+                direction=angledVector,
+                radius=fingerInfo["connectorWidth"] / 2,
+                height=6,
+            ).triangulate()
+
+            conjoiningMeshes.append(wedge)
 
         for pointToMove, newPointPosition in newProportionalPositions.items():
             socket.points[pointToMove] = newPointPosition
+
+        socket = socket.smooth_taubin(n_iter=70, pass_band=0.5)
+
         for mesh in conjoiningMeshes:
-            socket = socket.merge(mesh)
-        smoothSocket = socket.smooth_taubin(n_iter=10, pass_band=0.5)
-        cleanedSocket = smoothSocket.clean()
+            boolean = vtkPolyDataBooleanFilter()
+            boolean.SetInputData(0, socket)
+            boolean.SetInputData(1, mesh)
+            boolean.SetOperModeToDifference()
+            boolean.Update()
+            socket = pv.wrap(boolean.GetOutput())
+        cleanedSocket = socket.clean()
         print(f"final time: {time.time()-overallTime}")
         cleanedSocket.plot()
 
