@@ -90,7 +90,7 @@ class GUI(Qt.QMainWindow):
             "}"
         )
 
-        mainLayout = Qt.QVBoxLayout()
+        mainLayout = Qt.QHBoxLayout()
         self.vtkWidget = QVTKRenderWindowInteractor(self)
         self.renderer = vtk.vtkRenderer()
         self.vtkWidget.GetRenderWindow().AddRenderer(self.renderer)
@@ -106,13 +106,17 @@ class GUI(Qt.QMainWindow):
             "LeftButtonReleaseEvent", self.on_release
         )
 
-        self.handManipulator = HandManipulator(
-            self.renderWindowInteractor, self.renderer, self.vtkWidget.GetRenderWindow()
-        )
-
         self.handMesh = HandMesh(
             self.renderWindowInteractor, self.renderer, self.vtkWidget.GetRenderWindow()
         )
+
+        self.handManipulator = HandManipulator(
+            self.renderWindowInteractor,
+            self.renderer,
+            self.vtkWidget.GetRenderWindow(),
+            self.handMesh.getHandMesh(),
+        )
+
         self.socketMode = False
 
         self.initUI(mainLayout)
@@ -220,7 +224,7 @@ class GUI(Qt.QMainWindow):
         scroll = Qt.QScrollArea()
         scroll.setWidget(tab)
         scroll.setWidgetResizable(True)
-        scroll.setFixedHeight(500)
+        scroll.setFixedHeight(600)
 
         return scroll
 
@@ -240,12 +244,7 @@ class GUI(Qt.QMainWindow):
 
         fingerSubBoxes = Qt.QHBoxLayout()
         labelNames = ["Index", "Middle", "Third", "Fourth"]
-        fingerJointSpheres = [
-            self.handManipulator.indexJoints.keys(),
-            self.handManipulator.middleJoints.keys(),
-            self.handManipulator.thirdJoints.keys(),
-            self.handManipulator.fourthJoints.keys(),
-        ]
+
         for i in range(4):
             box = Qt.QVBoxLayout()
             label = Qt.QLabel(f"{labelNames[i]} Finger")
@@ -259,7 +258,7 @@ class GUI(Qt.QMainWindow):
             slider.setSingleStep(1)
             slider.setTickInterval(1)
             slider.setMinimumHeight(100)
-            slider.setValue(4)
+            slider.setValue(0)
             slider.setTickPosition(QtWidgets.QSlider.TicksBothSides)
             slider.valueChanged.connect(self.toggleJointInteraction)
             self.sliders.append(slider)
@@ -369,7 +368,7 @@ class GUI(Qt.QMainWindow):
         scroll2 = Qt.QScrollArea()
         scroll2.setWidget(tab)
         scroll2.setWidgetResizable(True)
-        scroll2.setFixedHeight(500)
+        scroll2.setFixedHeight(800)
 
         return scroll2
 
@@ -399,16 +398,6 @@ class GUI(Qt.QMainWindow):
         sender = self.sender()
         fingerIndex = self.sliders.index(sender)
         self.handManipulator.enableJoints(fingerIndex, jointIDx)
-        # if state == QtCore.Qt.Checked:
-        #     for thing in range(jointIndex, len())
-        #     self.handManipulator.boneReference[fingerIndex][jointIndex]
-        #     joint.actor.PickableOff()
-        #     joint.actor.SetVisibility(False)
-        #     joint.toggled = False
-        # else:
-        #     joint.actor.PickableOn()
-        #     joint.toggled = True
-        #     joint.actor.SetVisibility(True)
 
     def generateHardSocket(self):
         writer = vtk.vtkSTLWriter()

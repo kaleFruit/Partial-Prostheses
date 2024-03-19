@@ -39,6 +39,9 @@ class HandMesh:
 
         self.finalSocket = None
 
+    def getHandMesh(self):
+        return self.actor.GetMapper().GetInput()
+
     def genHandView(self, fileName: str):
         reader = vtk.vtkPLYReader()
         reader.SetFileName(fileName)
@@ -1000,14 +1003,18 @@ class HandMesh:
         initRadius = 8
         layers = 10
 
+        rayLength = max(
+            [handMesh.bounds[2 * k + 1] - handMesh.bounds[2 * k] for k in range(3)]
+        )
         overallTime = time.time()
         for i, carpal in enumerate(carpals):
             start = time.time()
-
             tempIDList = []
+            direction = carpal["center"] - carpal["normal"]
+            direction /= np.linalg.norm(direction)
             point, _ = socket.ray_trace(
                 carpal["center"],
-                [carpal["center"][i] - carpal["normal"][i] for i in range(3)],
+                -1 * rayLength * direction,
                 first_point=True,
             )
             selectingSphere = pv.Sphere(radius=initRadius + layers, center=point)
@@ -1053,9 +1060,11 @@ class HandMesh:
         ):
             threshold = 5e-1
             start = time.time()
+            direction = carpal["center"] - carpal["normal"]
+            direction /= np.linalg.norm(direction)
             point, _ = socket.ray_trace(
-                carpalOrigin,
-                [carpalOrigin[i] - carpalVector[i] for i in range(3)],
+                carpal["center"],
+                -1 * rayLength * direction,
                 first_point=True,
             )
             selectingSphere = pv.Sphere(radius=radius, center=point)
@@ -1068,7 +1077,7 @@ class HandMesh:
                 if selectedIds[idx]:
                     point = socket.points[idx]
                     u = socket.point_normals[idx]
-                    v = np.array(carpal["normal"])
+                    v = carpal["normal"]
                     angle = np.arccos(
                         np.dot(u, v) / (np.linalg.norm(u) * np.linalg.norm(v))
                     )
@@ -1248,7 +1257,6 @@ class HandMesh:
             socket = pv.wrap(boolean.GetOutput())
         cleanedSocket = socket.clean()
         print(f"final time: {time.time()-overallTime}")
-        cleanedSocket.plot()
 
         self.finalSocket.DeepCopy(cleanedSocket)
         self.finalSocket.Modified()

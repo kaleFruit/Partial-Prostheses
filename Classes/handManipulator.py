@@ -117,7 +117,7 @@ class sphereBone:
 
 
 class HandManipulator:
-    def __init__(self, renderWinIn, ren, renWin):
+    def __init__(self, renderWinIn, ren, renWin, handMesh):
         self.renderWindowInteractor = renderWinIn
         self.renderer = ren
         self.renderWindow = renWin
@@ -127,6 +127,8 @@ class HandManipulator:
         self.middleJoints = {}
         self.thirdJoints = {}
         self.fourthJoints = {}
+
+        self.handMesh = pv.wrap(handMesh).triangulate()
 
         self.rootSphere = None
         self.createSkeleton()
@@ -145,6 +147,8 @@ class HandManipulator:
         self.wristRotation = np.pi / 2
         self.wristMinorRadius = 15
 
+        self.createWristBand()
+
     @property
     def jointsList(self):
         return [
@@ -156,17 +160,31 @@ class HandManipulator:
 
     def enableJoints(self, fingerIndex, jointIndex):
         for index in range(jointIndex, len(self.jointsList[fingerIndex])):
-            currPiece = list(self.jointsList[fingerIndex].keys())[index]
-            currPiece.actor.PickableOff()
-            currPiece.actor.SetVisibility(False)
-            currPiece.toggled = False
-            self.jointsList[fingerIndex][currPiece][0].actor.SetVisibility(False)
-        for index in range(1, jointIndex):
-            currPiece = list(self.jointsList[fingerIndex].keys())[index]
+            if index == len(self.jointsList[fingerIndex])-1:
+                currPiece = list(self.jointsList[fingerIndex].keys())[index]
+                currPiece.actor.PickableOn()
+                currPiece.actor.SetVisibility(True)
+                currPiece.toggled = True
+                self.jointsList[fingerIndex][currPiece][0].actor.SetVisibility(True)
+            currPiece = list(self.jointsList[fingerIndex].keys())[index - 1]
             currPiece.actor.PickableOn()
             currPiece.actor.SetVisibility(True)
             currPiece.toggled = True
             self.jointsList[fingerIndex][currPiece][0].actor.SetVisibility(True)
+        for index in range(1, jointIndex):
+            currBone = list(self.jointsList[fingerIndex].keys())[index]
+            self.jointsList[fingerIndex][currBone][0].actor.SetVisibility(False)
+            currSphere = list(self.jointsList[fingerIndex].keys())[index - 1]
+            currSphere.toggled = False
+            if index > 1:
+                currSphere.actor.PickableOff()
+                currSphere.actor.SetVisibility(False)
+            if index == len(self.jointsList[fingerIndex]) - 1:
+                currSphere = list(self.jointsList[fingerIndex].keys())[index]
+                currSphere.actor.PickableOff()
+                currSphere.actor.SetVisibility(False)
+                currSphere.toggled = False
+
         self.renderWindow.Render()
 
     def getJoints(self):
@@ -179,11 +197,14 @@ class HandManipulator:
                     if i <= palmMostJoint:
                         palmMostJoint = i
             if palmMostJoint < 4:
+                normal = np.array(fingerJoints[1].center) - np.array(
+                    fingerJoints[0].center
+                )
+                normal /= np.linalg.norm(normal)
                 joints.append(
                     {
                         "center": np.array(fingerJoints[palmMostJoint].center),
-                        "normal": np.array(fingerJoints[1].center)
-                        - np.array(fingerJoints[0].center),
+                        "normal": normal,
                     }
                 )
         return joints
@@ -425,6 +446,7 @@ class HandManipulator:
 
         self.clearOldFingers()
         stringHoleRadius = 1
+        fingerColor = (0, 0.3, 0)
 
         for jointListIdx in range(len(self.jointsList)):
             stringLoc, tensionerHeightAboveWrist = self.findCorrectActuation(
@@ -448,7 +470,7 @@ class HandManipulator:
             if jointListIdx == len(self.jointsList) - 1:
                 normal *= -1
             for jointIdx in range(1, len(self.jointsList[jointListIdx])):
-                if list(jointList.keys())[jointIdx].toggled:
+                if list(jointList.keys())[jointIdx].toggled and list(jointList.keys())[jointIdx-1].toggled:
                     pointEnd = np.array(list(jointList.keys())[jointIdx].center)
                     pointStart = np.array(list(jointList.keys())[jointIdx - 1].center)
                     vector = pointEnd - pointStart
@@ -488,6 +510,7 @@ class HandManipulator:
                     mapper.SetInputData(vtk_polydata)
                     actor = vtk.vtkActor()
                     actor.SetMapper(mapper)
+                    actor.GetProperty().SetColor(fingerColor)
                     tempMeshList.append(actor)
                     file1 = open("strengthAnalysis/fingerGenerationTimes.txt", "a")
                     file1.write(f"{length} {time.time()-start}\n")
@@ -503,7 +526,7 @@ class HandManipulator:
 
             tempMeshList = []
             for jointIdx in range(1, len(self.jointsList[jointListIdx])):
-                if list(jointList.keys())[jointIdx].toggled:
+                if list(jointList.keys())[jointIdx].toggled and list(jointList.keys())[jointIdx-1].toggled:
                     pointEnd = np.array(list(jointList.keys())[jointIdx].center)
                     pointStart = np.array(list(jointList.keys())[jointIdx - 1].center)
                     vector = pointEnd - pointStart
@@ -527,6 +550,7 @@ class HandManipulator:
                     mapper = vtk.vtkPolyDataMapper()
                     mapper.SetInputData(vtk_polydata)
                     actor = vtk.vtkActor()
+                    actor.GetProperty().SetColor(fingerColor)
                     actor.SetMapper(mapper)
                     tempMeshList.append(actor)
             self.fingerConnectorActors.append(tempMeshList)
@@ -1517,23 +1541,38 @@ class HandManipulator:
         return stringLoc, tensionerHeightAboveWrist
 
     def createWristBand(self):
-        jointList = self.jointsList[1]
-        pointEnd = np.array(list(jointList.keys())[1].center)
-        pointStart = np.array(list(jointList.keys())[0].center)
-        vector = pointEnd - pointStart
-        vector /= np.linalg.norm(vector)
+        # jointList = self.jointsList[1]
+        # pointEnd = np.array(list(jointList.keys())[1].center)
+        # pointStart = np.array(list(jointList.keys())[0].center)
+        # vector = pointEnd - pointStart
+        # vector /= np.linalg.norm(vector)
+        # size = max(
+        #     [
+        #         self.handMesh.bounds[2 * k + 1] - self.handMesh.bounds[2 * k]
+        #         for k in range(3)
+        #     ]
+        # )
+        # plane = pv.Plane(
+        #     center=self.rootSphere.center, direction=vector, i_size=size, j_size=size
+        # ).triangulate()
+        # intersection, _, _ = self.handMesh.intersection(plane)
+        # X = np.array([i[0] for i in intersection.points])
+        # Y = np.array([i[1] for i in intersection.points])
+        # A = np.hstack([X**2, X * Y, Y**2, X, Y])
+        # b = np.ones_like(X)
+        # x, residuals, rank, s = np.linalg.lstsq(A, b, rcond=None)
+        # x_coord = np.linspace(-5,5,300)
+        # y_coord = np.linspace(-5,5,300)
+        # X_coord, Y_coord = np.meshgrid(x_coord, y_coord)
+        # Z_coord = x[0] * X_coord ** 2 + x[1] * X_coord * Y_coord + x[2] * Y_coord**2 + x[3] * X_coord + x[4] * Y_coord
+        # contour = plt.contour(X_coord, Y_coord, Z_coord, levels=[1])
+        # paths = contour.collections[0].get_paths()
+        # path = paths[0]
+        # vertices = path.vertices
 
-        A = np.hstack([X**2, X * Y, Y**2, X, Y])
-        b = np.ones_like(X)
-        x = np.linalg.lstsq(A, b)[0].squeeze()
-        x_coord = np.linspace(-5, 5, 300)
-        y_coord = np.linspace(-5, 5, 300)
-        X_coord, Y_coord = np.meshgrid(x_coord, y_coord)
-        Z_coord = (
-            x[0] * X_coord**2
-            + x[1] * X_coord * Y_coord
-            + x[2] * Y_coord**2
-            + x[3] * X_coord
-            + x[4] * Y_coord
-        )
-        plt.contour(X_coord, Y_coord, Z_coord, levels=[1], colors=("r"), linewidths=2)
+        # p = pv.Plotter()
+        # p.add_mesh(self.handMesh)
+        # p.add_mesh(plane)
+        # p.add_mesh(intersection, color="r", line_width=20)
+        # p.show()
+        pass
