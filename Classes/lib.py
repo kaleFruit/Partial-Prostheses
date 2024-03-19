@@ -2,8 +2,7 @@ import numpy as np
 import vtk
 import pandas as pd
 import pymeshlab as ml
-from PyQt5 import QtCore, QtGui, QtWidgets
-from PyQt5 import Qt
+from PyQt5 import QtCore, QtGui, QtWidgets, Qt
 from vtkmodules.qt.QVTKRenderWindowInteractor import QVTKRenderWindowInteractor
 import sys
 import open3d as o3d

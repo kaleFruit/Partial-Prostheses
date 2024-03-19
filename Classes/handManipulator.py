@@ -142,6 +142,8 @@ class HandManipulator:
         self.fingerWidth = 14
         self.connectorThickness = 1.3
         self.connectorRadius = 1.7
+        self.wristRotation = np.pi / 2
+        self.wristMinorRadius = 15
 
     @property
     def jointsList(self):
@@ -151,6 +153,21 @@ class HandManipulator:
             self.thirdJoints,
             self.fourthJoints,
         ]
+
+    def enableJoints(self, fingerIndex, jointIndex):
+        for index in range(jointIndex, len(self.jointsList[fingerIndex])):
+            currPiece = list(self.jointsList[fingerIndex].keys())[index]
+            currPiece.actor.PickableOff()
+            currPiece.actor.SetVisibility(False)
+            currPiece.toggled = False
+            self.jointsList[fingerIndex][currPiece][0].actor.SetVisibility(False)
+        for index in range(1, jointIndex):
+            currPiece = list(self.jointsList[fingerIndex].keys())[index]
+            currPiece.actor.PickableOn()
+            currPiece.actor.SetVisibility(True)
+            currPiece.toggled = True
+            self.jointsList[fingerIndex][currPiece][0].actor.SetVisibility(True)
+        self.renderWindow.Render()
 
     def getJoints(self):
         joints = []
@@ -173,6 +190,9 @@ class HandManipulator:
 
     def setFingerWidth(self, val):
         self.fingerWidth = val
+
+    def setWristRotation(self, val):
+        self.wristRotation = val
 
     def setFingerHeight(self, val):
         self.fingerHeight = val
@@ -373,8 +393,9 @@ class HandManipulator:
         for finger in self.fingerActors:
             for part in finger:
                 self.renderer.RemoveActor(part)
-        for actor in self.fingerConnectorActors:
-            self.renderer.RemoveActor(actor)
+        for finger in self.fingerConnectorActors:
+            for connector in finger:
+                self.renderer.RemoveActor(connector)
         self.fingerActors = []
         self.fingerConnectorActors = []
 
@@ -401,8 +422,14 @@ class HandManipulator:
         return fingerConnectors
 
     def generateFingers(self):
+
         self.clearOldFingers()
+        stringHoleRadius = 1
+
         for jointListIdx in range(len(self.jointsList)):
+            stringLoc, tensionerHeightAboveWrist = self.findCorrectActuation(
+                jointListIdx, stringHoleRadius
+            )
             start = time.time()
             jointList = self.jointsList[jointListIdx]
             length = np.linalg.norm(
@@ -421,51 +448,50 @@ class HandManipulator:
             if jointListIdx == len(self.jointsList) - 1:
                 normal *= -1
             for jointIdx in range(1, len(self.jointsList[jointListIdx])):
-                pointEnd = np.array(list(jointList.keys())[jointIdx].center)
-                pointStart = np.array(list(jointList.keys())[jointIdx - 1].center)
-                vector = pointEnd - pointStart
-                midpoint = (pointStart + pointEnd) / 2
-                fingerBodyLength = np.linalg.norm(vector)
-                direction = vector / fingerBodyLength
+                if list(jointList.keys())[jointIdx].toggled:
+                    pointEnd = np.array(list(jointList.keys())[jointIdx].center)
+                    pointStart = np.array(list(jointList.keys())[jointIdx - 1].center)
+                    vector = pointEnd - pointStart
+                    midpoint = (pointStart + pointEnd) / 2
+                    fingerBodyLength = np.linalg.norm(vector)
+                    direction = vector / fingerBodyLength
 
-                topRadii = 5
-                bottomRadii = 4
-                fingerBodyHeight = self.fingerHeight
-                fingerBodyWidth = self.fingerWidth
-                resolution = 16
-                stringHoleRadius = 1
-                connectorThickness = self.connectorThickness
-                connectorRadius = self.connectorRadius
-                connectorLength = 5.8
-                connectorDistanceBelowMidline = 1.5
+                    topRadii = 5
+                    bottomRadii = 4
+                    fingerBodyHeight = self.fingerHeight
+                    fingerBodyWidth = self.fingerWidth
+                    resolution = 16
+                    connectorThickness = self.connectorThickness
+                    connectorRadius = self.connectorRadius
+                    connectorLength = 5.8
+                    connectorDistanceBelowMidline = 1.5
 
-                part = self.generateFingerPartWithConnectorCut(
-                    resolution=resolution,
-                    topRadii=topRadii,
-                    bottomRadii=bottomRadii,
-                    fingerBodyHeight=fingerBodyHeight,
-                    fingerBodyWidth=fingerBodyWidth,
-                    stringHoleRadius=stringHoleRadius,
-                    fingerBodyLength=fingerBodyLength,
-                    connectorRadius=connectorRadius,
-                    connectorLength=connectorLength,
-                    connectorThickness=connectorThickness,
-                    connectorDistanceBelowMidline=connectorDistanceBelowMidline,
-                )
+                    part = self.generateFingerPartWithConnectorCut(
+                        resolution=resolution,
+                        topRadii=topRadii,
+                        bottomRadii=bottomRadii,
+                        fingerBodyHeight=fingerBodyHeight,
+                        fingerBodyWidth=fingerBodyWidth,
+                        stringHoleRadius=stringHoleRadius,
+                        fingerBodyLength=fingerBodyLength,
+                        connectorRadius=connectorRadius,
+                        connectorLength=connectorLength,
+                        connectorThickness=connectorThickness,
+                        connectorDistanceBelowMidline=connectorDistanceBelowMidline,
+                        stringLoc=stringLoc,
+                    )
 
-                part = self.moveAlignMesh(part, midpoint, direction, normal)
-                vtk_polydata = part.extract_geometry()
-                mapper = vtk.vtkPolyDataMapper()
+                    part = self.moveAlignMesh(part, midpoint, direction, normal)
+                    vtk_polydata = part.extract_geometry()
+                    mapper = vtk.vtkPolyDataMapper()
 
-                mapper.SetInputData(vtk_polydata)
-                actor = vtk.vtkActor()
-                actor.SetMapper(mapper)
-                tempMeshList.append(actor)
-                file1 = open(
-                    "strengthAnalysis/fingerGenerationTimes.txt", "a"
-                )  # append mode
-                file1.write(f"{length} {time.time()-start}\n")
-                file1.close()
+                    mapper.SetInputData(vtk_polydata)
+                    actor = vtk.vtkActor()
+                    actor.SetMapper(mapper)
+                    tempMeshList.append(actor)
+                    file1 = open("strengthAnalysis/fingerGenerationTimes.txt", "a")
+                    file1.write(f"{length} {time.time()-start}\n")
+                    file1.close()
             self.fingerActors.append(tempMeshList)
 
             resolutionEnd = 10
@@ -473,36 +499,36 @@ class HandManipulator:
             thickness = 1
             endRadius = 1.5
             length = 5.5
-
-            width = fingerBodyWidth
+            width = self.fingerWidth
 
             tempMeshList = []
             for jointIdx in range(1, len(self.jointsList[jointListIdx])):
-                pointEnd = np.array(list(jointList.keys())[jointIdx].center)
-                pointStart = np.array(list(jointList.keys())[jointIdx - 1].center)
-                vector = pointEnd - pointStart
-                direction = vector / np.linalg.norm(vector)
+                if list(jointList.keys())[jointIdx].toggled:
+                    pointEnd = np.array(list(jointList.keys())[jointIdx].center)
+                    pointStart = np.array(list(jointList.keys())[jointIdx - 1].center)
+                    vector = pointEnd - pointStart
+                    direction = vector / np.linalg.norm(vector)
 
-                part = self.genConnector(
-                    endRadius=endRadius,
-                    length=length,
-                    thickness=thickness,
-                    resolutionBody=resolutionBody,
-                    resolutionEnd=resolutionEnd,
-                    width=width + 1,
-                )
-                part = self.moveAlignMesh(
-                    part,
-                    pointStart,
-                    direction,
-                    normal,
-                )
-                vtk_polydata = part.extract_geometry()
-                mapper = vtk.vtkPolyDataMapper()
-                mapper.SetInputData(vtk_polydata)
-                actor = vtk.vtkActor()
-                actor.SetMapper(mapper)
-                tempMeshList.append(actor)
+                    part = self.genConnector(
+                        endRadius=endRadius,
+                        length=length,
+                        thickness=thickness,
+                        resolutionBody=resolutionBody,
+                        resolutionEnd=resolutionEnd,
+                        width=width + 1,
+                    )
+                    part = self.moveAlignMesh(
+                        part,
+                        pointStart,
+                        direction,
+                        normal,
+                    )
+                    vtk_polydata = part.extract_geometry()
+                    mapper = vtk.vtkPolyDataMapper()
+                    mapper.SetInputData(vtk_polydata)
+                    actor = vtk.vtkActor()
+                    actor.SetMapper(mapper)
+                    tempMeshList.append(actor)
             self.fingerConnectorActors.append(tempMeshList)
 
         self.displayFingerMeshes()
@@ -520,6 +546,7 @@ class HandManipulator:
         connectorLength,
         connectorThickness,
         connectorDistanceBelowMidline,
+        stringLoc,
     ):
 
         def endFaceTop(
@@ -579,8 +606,8 @@ class HandManipulator:
                 newPoints.append(
                     (
                         holeRadius * np.cos(theta),
-                        holeRadius * np.sin(theta) + fingerBodyHeight / 4,
-                        holeRadius * np.sin(theta) + fingerBodyHeight / 4,
+                        holeRadius * np.sin(theta) + stringLoc,
+                        holeRadius * np.sin(theta) + stringLoc,
                     )
                 )
             for i in range(resolution + 1):
@@ -949,93 +976,6 @@ class HandManipulator:
         cleanedMerge = merged.clean().compute_normals()
         return cleanedMerge
 
-    def generateFingersNoData(self):
-        self.clearOldFingers()
-        for jointListIdx in range(len(self.jointsList)):
-            tempMeshList = []
-            jointList = self.jointsList[jointListIdx]
-            jointNeighborIndex = jointListIdx + 1
-            if jointListIdx == len(self.jointsList) - 1:
-                jointNeighborIndex = jointListIdx - 1
-            jointNeighborList = self.jointsList[jointNeighborIndex]
-            central = np.array(self.rootSphere.center)
-            u = np.array(list(jointList.keys())[1].center) - central
-            v = np.array(list(jointNeighborList.keys())[1].center) - central
-            normal = np.cross(u, v)
-            if jointListIdx == len(self.jointsList) - 1:
-                normal *= -1
-            for jointIdx in range(1, len(self.jointsList[jointListIdx])):
-                pointEnd = np.array(list(jointList.keys())[jointIdx].center)
-                pointStart = np.array(list(jointList.keys())[jointIdx - 1].center)
-                vector = pointEnd - pointStart
-                midpoint = (pointStart + pointEnd) / 2
-                fingerBodyLength = np.linalg.norm(vector)
-                direction = vector / fingerBodyLength
-
-                topRadii = 5
-                bottomRadii = 4
-                fingerBodyHeight = 12
-                fingerBodyWidth = 14
-                resolution = 9
-                holeRadius = 1
-
-                part = self.generateFingerPart(
-                    resolution=resolution,
-                    topRadii=topRadii,
-                    bottomRadii=bottomRadii,
-                    fingerBodyHeight=fingerBodyHeight,
-                    fingerBodyWidth=fingerBodyWidth,
-                    holeRadius=holeRadius,
-                    fingerBodyLength=fingerBodyLength,
-                )
-                part = self.moveAlignMesh(part, midpoint, direction, normal)
-                vtk_polydata = part.extract_geometry()
-                mapper = vtk.vtkPolyDataMapper()
-
-                mapper.SetInputData(vtk_polydata)
-                actor = vtk.vtkActor()
-                actor.SetMapper(mapper)
-                tempMeshList.append(actor)
-            self.fingerActors.append(tempMeshList)
-
-            resolutionEnd = 10
-            resolutionBody = 10
-            thickness = 1.3
-            endRadius = 1.7
-            length = 5.8
-            width = fingerBodyWidth
-
-            tempMeshList = []
-            for jointIdx in range(1, len(self.jointsList[jointListIdx])):
-                pointEnd = np.array(list(jointList.keys())[jointIdx].center)
-                pointStart = np.array(list(jointList.keys())[jointIdx - 1].center)
-                vector = pointEnd - pointStart
-                direction = vector / np.linalg.norm(vector)
-
-                part = self.genConnector(
-                    endRadius=endRadius,
-                    length=length,
-                    thickness=thickness,
-                    resolutionBody=resolutionBody,
-                    resolutionEnd=resolutionEnd,
-                    width=width + 1,
-                )
-                part = self.moveAlignMesh(
-                    part,
-                    pointStart,
-                    direction,
-                    normal,
-                )
-                vtk_polydata = part.extract_geometry()
-                mapper = vtk.vtkPolyDataMapper()
-                mapper.SetInputData(vtk_polydata)
-                actor = vtk.vtkActor()
-                actor.SetMapper(mapper)
-                tempMeshList.append(actor)
-            self.fingerConnectorActors.append(tempMeshList)
-        # self.cutConnectors()
-        self.displayFingerMeshes()
-
     def displayFingerMeshes(self):
         for finger in self.fingerActors:
             for part in finger:
@@ -1108,7 +1048,6 @@ class HandManipulator:
             newPoints.pop(0)
             newPoints.pop()
             newPoints.append((0, 0, 0))
-            # ADJUSTED
             for p in range(len(newPoints) - 1):
                 faces.append((3, p + 1, len(newPoints) - 1, p))
             for i in range(2):
@@ -1160,10 +1099,8 @@ class HandManipulator:
                     )
                 )
             offset = resolution - 2
-            # adjusted
             faces.append((3, resolution + offset, offset, offset - 1))
             faces.append((3, 0, offset, offset + 1))
-            # adjusted
             for i in range(resolution + 1):
                 faces.append(
                     (
@@ -1214,7 +1151,6 @@ class HandManipulator:
                 (vertice[0], vertice[1], -1 * vertice[2] + fingerBodyLength / 2)
             )
         adjustedBackFaces = []
-        # adjusted
         for idx in range(len(facesBack)):
             newFace = (
                 3,
@@ -1537,3 +1473,67 @@ class HandManipulator:
         for i, point in enumerate(totalVertices):
             totalVertices[i] = (point[0], point[1] - offset, point[2])
         return pv.PolyData(totalVertices, totalFaces).compute_normals()
+
+    def calculateStringTravelForFullActuation(self, fingerIdx, stringLoc):
+        return 2 * stringLoc * (len(self.jointsList[fingerIdx]) - 1)
+
+    def calculateWristActuation(self, tensionerHeightAboveWrist):
+        return (tensionerHeightAboveWrist + self.wristMinorRadius) * self.wristRotation
+
+    def findCorrectActuation(self, fingerIdx, holeRadius):
+        tensionerHeightAboveWrist = 4
+        if self.calculateStringTravelForFullActuation(
+            fingerIdx, self.fingerHeight / 4
+        ) < self.calculateWristActuation(tensionerHeightAboveWrist):
+            stringLoc = (
+                (tensionerHeightAboveWrist + self.wristMinorRadius)
+                * self.wristRotation
+                / 2
+                / (len(self.jointsList[fingerIdx]) - 1)
+            )
+            if stringLoc > self.fingerHeight / 2 - 1 - holeRadius / 2:
+                stringLoc = self.fingerHeight / 2 - 1 - holeRadius / 2
+                tensionerHeightAboveWrist = (
+                    2
+                    * stringLoc
+                    * (len(self.jointsList[fingerIdx]) - 1)
+                    / self.wristRotation
+                ) - self.wristMinorRadius
+        else:
+            stringLoc = (
+                (tensionerHeightAboveWrist + self.wristMinorRadius)
+                * self.wristRotation
+                / 2
+                / (len(self.jointsList[fingerIdx]) - 1)
+            )
+            if stringLoc < 1 + holeRadius / 2:
+                stringLoc = 1 + holeRadius / 2
+                tensionerHeightAboveWrist = (
+                    2
+                    * stringLoc
+                    * (len(self.jointsList[fingerIdx]) - 1)
+                    / self.wristRotation
+                ) - self.wristMinorRadius
+        return stringLoc, tensionerHeightAboveWrist
+
+    def createWristBand(self):
+        jointList = self.jointsList[1]
+        pointEnd = np.array(list(jointList.keys())[1].center)
+        pointStart = np.array(list(jointList.keys())[0].center)
+        vector = pointEnd - pointStart
+        vector /= np.linalg.norm(vector)
+
+        A = np.hstack([X**2, X * Y, Y**2, X, Y])
+        b = np.ones_like(X)
+        x = np.linalg.lstsq(A, b)[0].squeeze()
+        x_coord = np.linspace(-5, 5, 300)
+        y_coord = np.linspace(-5, 5, 300)
+        X_coord, Y_coord = np.meshgrid(x_coord, y_coord)
+        Z_coord = (
+            x[0] * X_coord**2
+            + x[1] * X_coord * Y_coord
+            + x[2] * Y_coord**2
+            + x[3] * X_coord
+            + x[4] * Y_coord
+        )
+        plt.contour(X_coord, Y_coord, Z_coord, levels=[1], colors=("r"), linewidths=2)

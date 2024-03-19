@@ -933,7 +933,7 @@ class HandMesh:
         connectorRadius,
     ):
         resolutionEnd = 12
-    
+
         connector = self.createFullConnector(
             width=connectorWidth + 5,
             endRadius=connectorRadius,

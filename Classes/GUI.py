@@ -1,4 +1,4 @@
-from lib import vtk, Qt, QVTKRenderWindowInteractor, QtCore, QtWidgets
+from lib import vtk, Qt, QVTKRenderWindowInteractor, QtCore, QtWidgets, np
 from handManipulator import HandManipulator
 from handMesh import HandMesh
 
@@ -227,7 +227,7 @@ class GUI(Qt.QMainWindow):
     def fingerTabUI(self):
         tab = Qt.QWidget()
 
-        self.checkboxes = {}
+        self.sliders = []
         outerBox = Qt.QVBoxLayout()
 
         splitBox = Qt.QVBoxLayout()
@@ -240,7 +240,7 @@ class GUI(Qt.QMainWindow):
 
         fingerSubBoxes = Qt.QHBoxLayout()
         labelNames = ["Index", "Middle", "Third", "Fourth"]
-        fingerNames = [
+        fingerJointSpheres = [
             self.handManipulator.indexJoints.keys(),
             self.handManipulator.middleJoints.keys(),
             self.handManipulator.thirdJoints.keys(),
@@ -250,11 +250,21 @@ class GUI(Qt.QMainWindow):
             box = Qt.QVBoxLayout()
             label = Qt.QLabel(f"{labelNames[i]} Finger")
             box.addWidget(label)
-            for j, sphere in enumerate(fingerNames[i]):
-                cb = QtWidgets.QCheckBox(sphere.name)
-                box.addWidget(cb)
-                cb.stateChanged.connect(self.toggleJointInteraction)
-                self.checkboxes[cb] = sphere
+            h_layout = Qt.QHBoxLayout()
+            box.addLayout(h_layout)
+            slider = QtWidgets.QSlider()
+            slider.setOrientation(QtCore.Qt.Vertical)
+            slider.setMinimum(1)
+            slider.setMaximum(4)
+            slider.setSingleStep(1)
+            slider.setTickInterval(1)
+            slider.setMinimumHeight(100)
+            slider.setValue(4)
+            slider.setTickPosition(QtWidgets.QSlider.TicksBothSides)
+            slider.valueChanged.connect(self.toggleJointInteraction)
+            self.sliders.append(slider)
+            h_layout.addWidget(slider)
+
             frame = Qt.QFrame()
             frame.setFrameShape(Qt.QFrame.StyledPanel)
             frame.setStyleSheet(
@@ -269,6 +279,13 @@ class GUI(Qt.QMainWindow):
         rightHeader.setAlignment(QtCore.Qt.AlignCenter)
         rightHeader.setStyleSheet("QLabel { font-size: 20px;}")
         fingerSettingsBox.addWidget(rightHeader)
+
+        fingerSettingsBox.addWidget(Qt.QLabel("Set Wrist Actuation Rotation:"))
+        wristRotation = QtWidgets.QLineEdit()
+        wristRotation.setValidator(Qt.QIntValidator(0, 90))
+        wristRotation.setText("90")
+        wristRotation.textChanged.connect(self.setWristRotation)
+        fingerSettingsBox.addWidget(wristRotation)
 
         fingerSettingsBox.addWidget(Qt.QLabel("Set Finger Width:"))
         fingerWidth = Qt.QDoubleSpinBox()
@@ -378,15 +395,20 @@ class GUI(Qt.QMainWindow):
         self.handMesh.socketMode(state)
         self.socketMode = state
 
-    def toggleJointInteraction(self, state):
+    def toggleJointInteraction(self, jointIDx):
         sender = self.sender()
-        joint = self.checkboxes[sender]
-        if state == QtCore.Qt.Checked:
-            joint.actor.PickableOff()
-            joint.toggled = False
-        else:
-            joint.actor.PickableOn()
-            joint.toggled = True
+        fingerIndex = self.sliders.index(sender)
+        self.handManipulator.enableJoints(fingerIndex, jointIDx)
+        # if state == QtCore.Qt.Checked:
+        #     for thing in range(jointIndex, len())
+        #     self.handManipulator.boneReference[fingerIndex][jointIndex]
+        #     joint.actor.PickableOff()
+        #     joint.actor.SetVisibility(False)
+        #     joint.toggled = False
+        # else:
+        #     joint.actor.PickableOn()
+        #     joint.toggled = True
+        #     joint.actor.SetVisibility(True)
 
     def generateHardSocket(self):
         writer = vtk.vtkSTLWriter()
@@ -424,3 +446,7 @@ class GUI(Qt.QMainWindow):
 
     def setConnectorRadius(self, val):
         self.handManipulator.setConnectorRadius(float(val))
+
+    def setWristRotation(self, val):
+        if val:
+            self.handManipulator.setWristRotation(int(val) / 180 * np.pi)
