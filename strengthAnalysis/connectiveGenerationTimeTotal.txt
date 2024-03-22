@@ -1,0 +1,16 @@
+Time: 12.641466617584229 Num Fingers: 4
+Time: 12.397557020187378 Num Fingers: 4
+Time: 12.252795696258545 Num Fingers: 4
+Time: 12.308178663253784 Num Fingers: 4
+Time: 12.274295091629028 Num Fingers: 4
+Time: 9.119065046310425 Num Fingers: 3
+Time: 9.662256717681885 Num Fingers: 3
+Time: 9.999812364578247 Num Fingers: 3
+Time: 9.82117223739624 Num Fingers: 3
+Time: 9.699662923812866 Num Fingers: 3
+Time: 6.534693717956543 Num Fingers: 2
+Time: 6.747516870498657 Num Fingers: 2
+Time: 6.9565675258636475 Num Fingers: 2
+Time: 6.750312566757202 Num Fingers: 2
+Time: 6.612119436264038 Num Fingers: 2
+Time: 12.788450956344604 Num Fingers: 4

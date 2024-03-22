@@ -1,4 +1,4 @@
-from lib import vtk, pd, np, time, pv
+from lib import vtk, pd, np, time, pv, integrate, vtkPolyDataBooleanFilter
 
 
 class cylinderBone:
@@ -146,8 +146,7 @@ class HandManipulator:
         self.connectorRadius = 1.7
         self.wristRotation = np.pi / 2
         self.wristMinorRadius = 15
-
-        self.createWristBand()
+        self.tensionerHeightAboveWrist = 2
 
     @property
     def jointsList(self):
@@ -160,7 +159,7 @@ class HandManipulator:
 
     def enableJoints(self, fingerIndex, jointIndex):
         for index in range(jointIndex, len(self.jointsList[fingerIndex])):
-            if index == len(self.jointsList[fingerIndex])-1:
+            if index == len(self.jointsList[fingerIndex]) - 1:
                 currPiece = list(self.jointsList[fingerIndex].keys())[index]
                 currPiece.actor.PickableOn()
                 currPiece.actor.SetVisibility(True)
@@ -449,7 +448,7 @@ class HandManipulator:
         fingerColor = (0, 0.3, 0)
 
         for jointListIdx in range(len(self.jointsList)):
-            stringLoc, tensionerHeightAboveWrist = self.findCorrectActuation(
+            stringLoc, self.tensionerHeightAboveWrist = self.findCorrectActuation(
                 jointListIdx, stringHoleRadius
             )
             start = time.time()
@@ -470,7 +469,10 @@ class HandManipulator:
             if jointListIdx == len(self.jointsList) - 1:
                 normal *= -1
             for jointIdx in range(1, len(self.jointsList[jointListIdx])):
-                if list(jointList.keys())[jointIdx].toggled and list(jointList.keys())[jointIdx-1].toggled:
+                if (
+                    list(jointList.keys())[jointIdx].toggled
+                    and list(jointList.keys())[jointIdx - 1].toggled
+                ):
                     pointEnd = np.array(list(jointList.keys())[jointIdx].center)
                     pointStart = np.array(list(jointList.keys())[jointIdx - 1].center)
                     vector = pointEnd - pointStart
@@ -526,7 +528,10 @@ class HandManipulator:
 
             tempMeshList = []
             for jointIdx in range(1, len(self.jointsList[jointListIdx])):
-                if list(jointList.keys())[jointIdx].toggled and list(jointList.keys())[jointIdx-1].toggled:
+                if (
+                    list(jointList.keys())[jointIdx].toggled
+                    and list(jointList.keys())[jointIdx - 1].toggled
+                ):
                     pointEnd = np.array(list(jointList.keys())[jointIdx].center)
                     pointStart = np.array(list(jointList.keys())[jointIdx - 1].center)
                     vector = pointEnd - pointStart
@@ -1540,39 +1545,251 @@ class HandManipulator:
                 ) - self.wristMinorRadius
         return stringLoc, tensionerHeightAboveWrist
 
-    def createWristBand(self):
-        # jointList = self.jointsList[1]
-        # pointEnd = np.array(list(jointList.keys())[1].center)
-        # pointStart = np.array(list(jointList.keys())[0].center)
-        # vector = pointEnd - pointStart
-        # vector /= np.linalg.norm(vector)
-        # size = max(
-        #     [
-        #         self.handMesh.bounds[2 * k + 1] - self.handMesh.bounds[2 * k]
-        #         for k in range(3)
-        #     ]
-        # )
-        # plane = pv.Plane(
-        #     center=self.rootSphere.center, direction=vector, i_size=size, j_size=size
-        # ).triangulate()
-        # intersection, _, _ = self.handMesh.intersection(plane)
-        # X = np.array([i[0] for i in intersection.points])
-        # Y = np.array([i[1] for i in intersection.points])
-        # A = np.hstack([X**2, X * Y, Y**2, X, Y])
-        # b = np.ones_like(X)
-        # x, residuals, rank, s = np.linalg.lstsq(A, b, rcond=None)
-        # x_coord = np.linspace(-5,5,300)
-        # y_coord = np.linspace(-5,5,300)
+    def createWristBand(self, socketThickness):
+        jointList = self.jointsList[1]
+        pointEnd = np.array(list(jointList.keys())[1].center)
+        pointStart = np.array(list(jointList.keys())[0].center)
+        vector = pointEnd - pointStart
+        vector /= np.linalg.norm(vector)
+        vector = np.array([0, 1, 0])
+        size = max(
+            [
+                self.handMesh.bounds[2 * k + 1] - self.handMesh.bounds[2 * k]
+                for k in range(3)
+            ]
+        )
+        plane = pv.Plane(
+            center=self.rootSphere.center, direction=vector, i_size=size, j_size=size
+        ).triangulate()
+        intersection, _, _ = self.handMesh.intersection(plane)
+        X = np.array([[i[0]] for i in intersection.points])
+        Y = np.array([[i[2]] for i in intersection.points])
+        A = np.hstack([X**2, X * Y, Y**2, X, Y])
+        b = np.ones_like(X)
+        x, residuals, rank, s = np.linalg.lstsq(A, b, rcond=None)
+        A = x[0]
+        B = x[1]
+        C = x[2]
+        D = x[3]
+        E = x[4]
+        F = -1
+        term = np.sqrt((A - C) ** 2 + B**2)
+        h = (2 * C * D - B * E) / (B**2 - 4 * A * C)
+        k = (2 * A * E - B * D) / (B**2 - 4 * A * C)
+        a = np.sqrt(
+            2
+            * (A * E**2 + C * D**2 + B * D * E - 2 * A * C * F - B**2 * F)
+            / ((B**2 - 4 * A * C) * (term - (A + C)))
+        )
+        b = np.sqrt(
+            2
+            * (A * E**2 + C * D**2 + B * D * E - 2 * A * C * F - B**2 * F)
+            / ((B**2 - 4 * A * C) * (-term - (A + C)))
+        )
+        phi = 0.5 * np.arctan2(-B, C - A)
+
+        def getPointOnEllipse(theta):
+            xCoor = (
+                h + a * np.cos(theta) * np.cos(phi) - b * np.sin(theta) * np.sin(phi)
+            )
+            yCoor = (
+                k + a * np.cos(theta) * np.sin(phi) + b * np.sin(theta) * np.cos(phi)
+            )
+            return (xCoor[0], yCoor[0])
+
+        numFingers = 4
+        widthOfLost = 5.1
+        slotLength = 24
+        distanceBetweenSlots = 6
+        neededCircumference = numFingers * widthOfLost + distanceBetweenSlots * (
+            numFingers + 1
+        )
+        func = lambda theta: np.sqrt(a**2 * np.cos(theta) + b**2 * np.sin(theta))
+        theta = np.pi / 4
+        circumference = integrate.quad(func, -theta, theta)[0]
+        tolerance = 0.1
+        slotThickness = self.tensionerHeightAboveWrist - socketThickness
+        jump = 20
+        while abs(circumference - neededCircumference) > tolerance:
+            if circumference - neededCircumference < 0:
+                theta += np.pi / jump
+                circumference = integrate.quad(
+                    func, -theta - np.pi / 2, theta - np.pi / 2
+                )[0]
+            else:
+                theta += np.pi / jump
+                circumference = integrate.quad(
+                    func, -theta - np.pi / 2, theta - np.pi / 2
+                )[0]
+        # x_coord = np.linspace(self.handMesh.bounds[0], self.handMesh.bounds[1], 300)
+        # y_coord = np.linspace(self.handMesh.bounds[4], self.handMesh.bounds[5], 300)
         # X_coord, Y_coord = np.meshgrid(x_coord, y_coord)
-        # Z_coord = x[0] * X_coord ** 2 + x[1] * X_coord * Y_coord + x[2] * Y_coord**2 + x[3] * X_coord + x[4] * Y_coord
+        # Z_coord = (
+        #     A * X_coord**2
+        #     + B * X_coord * Y_coord
+        #     + C * Y_coord**2
+        #     + D * X_coord
+        #     + E * Y_coord
+        # )
         # contour = plt.contour(X_coord, Y_coord, Z_coord, levels=[1])
         # paths = contour.collections[0].get_paths()
         # path = paths[0]
-        # vertices = path.vertices
+        # vertices = [np.array([p[0], 0, p[1]]) for p in path.vertices]
+
+        vertices = []
+        resolution = 30
+        centerPt = np.array([h[0], k[0]])
+        for i in range(0, resolution):
+            j = theta * 2 / resolution * i - theta - np.pi / 2
+            p = np.array(getPointOnEllipse(j))
+            radius = p - centerPt
+            radius /= np.linalg.norm(radius)
+            p += radius * (socketThickness)
+            pt = np.array([p[0], 0, p[1]])
+            vertices.append(pt)
+        for i in range(0, resolution):
+            j = theta * 2 / resolution * i - theta - np.pi / 2
+            p = np.array(getPointOnEllipse(j))
+            radius = p - centerPt
+            radius /= np.linalg.norm(radius)
+            p += radius * (slotThickness + socketThickness)
+            pt = np.array([p[0], 0, p[1]])
+            vertices.append(pt)
+        faces = []
+
+        for i in range(resolution - 1):
+            faces.append((3, i, i + 1, i + resolution))
+            faces.append((3, i + resolution, i + 1 + resolution, i + 1))
+        # topFace
+        for i in range(0, resolution):
+            j = theta * 2 / resolution * i - theta - np.pi / 2
+            p = getPointOnEllipse(j)
+            vertices.append(np.array([p[0], slotLength, p[1]]))
+        for i in range(0, resolution):
+            j = theta * 2 / resolution * i - theta - np.pi / 2
+            p = np.array(getPointOnEllipse(j))
+            radius = p - centerPt
+            radius /= np.linalg.norm(radius)
+            p += radius * slotThickness
+            pt = np.array([p[0], slotLength, p[1]])
+            vertices.append(pt)
+        bottomOffset = resolution * 2
+        for i in range(resolution - 1):
+            faces.append(
+                (
+                    3,
+                    i + bottomOffset,
+                    i + 1 + bottomOffset,
+                    i + resolution + bottomOffset,
+                )
+            )
+            faces.append(
+                (
+                    3,
+                    i + resolution + bottomOffset,
+                    i + 1 + resolution + bottomOffset,
+                    i + 1 + bottomOffset,
+                )
+            )
+
+        for i in range(resolution - 1):
+            faces.append((3, i, i + 1, i + bottomOffset))
+            faces.append(
+                (
+                    3,
+                    i + bottomOffset,
+                    i + 1 + bottomOffset,
+                    i + 1,
+                )
+            )
+        for i in range(resolution, 2 * resolution - 1):
+            faces.append((3, i, i + 1, i + bottomOffset))
+            faces.append(
+                (
+                    3,
+                    i + bottomOffset,
+                    i + 1 + bottomOffset,
+                    i + 1,
+                )
+            )
+        faces.append((3, 0, resolution, bottomOffset))
+        faces.append((3, bottomOffset, bottomOffset + resolution, resolution))
+        faces.append(
+            (3, resolution - 1, 2 * resolution - 1, bottomOffset + resolution - 1)
+        )
+        faces.append(
+            (
+                3,
+                bottomOffset + resolution - 1,
+                bottomOffset + 2 * resolution - 1,
+                2 * resolution - 1,
+            )
+        )
+        tensioner = pv.PolyData(vertices, faces).compute_normals(
+            non_manifold_traversal=False,
+            consistent_normals=True,
+            auto_orient_normals=True,
+        )
+        thetaInterval = (theta * 2) / (numFingers + 1)
+        for i in range(numFingers):
+            slot = self.tensionerSlot()
+            p = getPointOnEllipse(thetaInterval * (i + 1) - np.pi / 2 - theta)
+            point = np.array([p[0], slotLength / 2, p[1]])
+            centerPoint = np.array([h[0], slotLength / 2, k[0]])
+            faceNormal = point - centerPoint
+            faceNormal /= np.linalg.norm(faceNormal)
+            slot = self.moveAlignMesh(slot, point, faceNormal, vector)
+            boolean = vtkPolyDataBooleanFilter()
+            boolean.SetInputData(0, tensioner)
+            boolean.SetInputData(1, slot)
+            boolean.SetOperModeToDifference()
+            boolean.Update()
+            tensioner = pv.wrap(boolean.GetOutput()).clean()
+        vtkTensioner = tensioner.extract_geometry()
+        mapper = vtk.vtkPolyDataMapper()
+        mapper.SetInputData(vtkTensioner)
+        actor = vtk.vtkActor()
+        actor.GetProperty().SetColor(0.5, 0.3, 1)
+        actor.SetMapper(mapper)
+        self.renderer.AddActor(actor)
+        self.renderWindow.Render()
+
+        # pls = vtk.vtkPoints()
+        # for pt in vertices:
+        #     pls.InsertNextPoint(pt)
+        # fd = vtk.vtkPolyData()
+        # fd.SetPoints(pls)
+        # self.plotPointCloud(fd, color=(0.5, 0.2, 1))
+        # self.renderWindow.Render()
 
         # p = pv.Plotter()
         # p.add_mesh(self.handMesh)
         # p.add_mesh(plane)
         # p.add_mesh(intersection, color="r", line_width=20)
         # p.show()
-        pass
+
+    def tensionerSlot(self):
+        return (
+            pv.read("stlfiles/tensionerthing.stl")
+            .clean()
+            .triangulate()
+            .compute_normals(
+                non_manifold_traversal=False,
+                consistent_normals=True,
+                auto_orient_normals=True,
+            )
+        )
+
+    def plotPointCloud(self, polydata, color=(1, 1, 1), size=5):
+        glyph_filter = vtk.vtkVertexGlyphFilter()
+        glyph_filter.SetInputData(polydata)
+        glyph_filter.Update()
+        mapper = vtk.vtkPolyDataMapper()
+        mapper.SetInputConnection(glyph_filter.GetOutputPort())
+        actor = vtk.vtkActor()
+        actor.SetMapper(mapper)
+        actor.GetProperty().SetPointSize(size)
+        self.renderer.AddActor(actor)
+        r, g, b = color
+        actor.GetProperty().SetColor(r, g, b)
+        self.renderWindow.Render()

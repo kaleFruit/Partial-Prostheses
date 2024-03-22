@@ -229,6 +229,9 @@ class HandMesh:
         self.actor.GetMapper().GetInput().Modified()
         self.renderWindow.Render()
 
+    def getSocketThickness(self):
+        return self.thickness
+
     def plotVectors(self, polydata, everyOther, h, s, v):
         pointsTest = vtk.vtkPoints()
         normalsTest = vtk.vtkFloatArray()
@@ -291,9 +294,9 @@ class HandMesh:
         socketShell = vtk.vtkPolyData()
         if self.fromPreviousDesign:
             reader = vtk.vtkPolyDataReader()
-            reader.SetFileName("oldDesigns/1stgen.vtk")
+            reader.SetFileName("oldDesigns/2ndgen.vtk")
             reader.Update()
-            socketShell = reader.GetOutput()
+            self.finalSocket = reader.GetOutput()
         else:
             newPoints = vtk.vtkPoints()
             newCells = vtk.vtkCellArray()
@@ -350,20 +353,19 @@ class HandMesh:
             socketShell.GetCellData().SetScalars(new_scalars)
             socketShell = self.cleanSocketShell(socketShell)
 
+            self.finalSocket = self.extrusion(socketShell)
             writer = vtk.vtkPolyDataWriter()
-            writer.SetFileName("oldDesigns/1stgen.vtk")
+            writer.SetFileName("oldDesigns/2ndgen.vtk")
             writer.SetInputData(socketShell)
             writer.Write()
 
-        finalSocket = self.extrusion(socketShell)
-        self.finalSocket = finalSocket
         writer = vtk.vtkSTLWriter()
         writer.SetFileName("finalSocket.stl")
-        writer.SetInputData(finalSocket)
+        writer.SetInputData(self.finalSocket)
         writer.Write()
 
         mapper = vtk.vtkPolyDataMapper()
-        mapper.SetInputData(finalSocket)
+        mapper.SetInputData(self.finalSocket)
         actor = vtk.vtkActor()
         actor.SetMapper(mapper)
         actor.GetProperty().SetColor(self.colors.GetColor3d("Red"))
@@ -967,6 +969,7 @@ class HandMesh:
         return mesh
 
     def removeNonManifoldPartsOfMesh(self, mesh):
+        mesh = mesh.triangulate()
         nonManifoldEdges = mesh.extract_feature_edges(
             boundary_edges=True,
             non_manifold_edges=True,
@@ -992,10 +995,10 @@ class HandMesh:
         return fixedMesh
 
     def genHandPortion(self, carpals, fingerMeshes, fingerInfo):
-        handMesh = pv.wrap(self.actor.GetMapper().GetInput())
+        handMesh = pv.wrap(self.actor.GetMapper().GetInput()).triangulate()
         jointRegionalPointIDXs = []
 
-        socket = pv.wrap(self.finalSocket)
+        socket = pv.wrap(self.finalSocket).triangulate()
         socket = self.removeNonManifoldPartsOfMesh(socket)
 
         newProportionalPositions = {}
@@ -1256,7 +1259,10 @@ class HandMesh:
             boolean.Update()
             socket = pv.wrap(boolean.GetOutput())
         cleanedSocket = socket.clean()
-        print(f"final time: {time.time()-overallTime}")
+        # print(f"final time: {time.time()-overallTime}")
+        file1 = open("strengthAnalysis/connectiveGenerationTimeTotal.txt", "a")
+        file1.write(f"Time: {time.time()-overallTime} Num Fingers: {len(carpals)}\n")
+        file1.close()
 
         self.finalSocket.DeepCopy(cleanedSocket)
         self.finalSocket.Modified()

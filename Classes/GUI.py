@@ -359,6 +359,10 @@ class GUI(Qt.QMainWindow):
             )
         )
 
+        tensionerPlate = QtWidgets.QPushButton("Generate String Tensioning Plate")
+        buttonBox.addWidget(tensionerPlate)
+        tensionerPlate.clicked.connect(self.tensionerPlate)
+
         saveFingerPos = QtWidgets.QPushButton("Save Finger Positions")
         buttonBox.addWidget(saveFingerPos)
         saveFingerPos.clicked.connect(self.saveFingerPositions)
@@ -380,6 +384,9 @@ class GUI(Qt.QMainWindow):
 
     def genFingers(self):
         self.handManipulator.generateFingers()
+
+    def tensionerPlate(self):
+        self.handManipulator.createWristBand(self.handMesh.getSocketThickness())
 
     def saveFingerPositions(self):
         self.handManipulator.saveFingerPositions()

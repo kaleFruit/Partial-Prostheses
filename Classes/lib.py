@@ -15,3 +15,6 @@ from scipy.spatial import Voronoi, cKDTree, ConvexHull
 from vtk.util.numpy_support import vtk_to_numpy
 from vtkmodules.vtkFiltersCore import vtkAppendPolyData
 import time
+from scipy.optimize import fsolve
+import matplotlib.pyplot as plt
+from scipy import integrate
