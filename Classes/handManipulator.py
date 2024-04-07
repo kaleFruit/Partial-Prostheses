@@ -141,11 +141,11 @@ class HandManipulator:
         self.proportions = pd.read_csv("csvData/relativeLengths.csv").set_index("Names")
 
         self.fingerHeight = 12
-        self.fingerWidth = 14
+        self.fingerWidth = 12
         self.connectorThickness = 1.3
         self.connectorRadius = 1.7
         self.wristRotation = np.pi / 2
-        self.wristMinorRadius = 15
+        self.wristMinorRadius = 11
         self.tensionerHeightAboveWrist = 2
 
     @property
@@ -1586,6 +1586,8 @@ class HandManipulator:
             * (A * E**2 + C * D**2 + B * D * E - 2 * A * C * F - B**2 * F)
             / ((B**2 - 4 * A * C) * (-term - (A + C)))
         )
+        self.wristMinorRadius = b
+        slotThickness = self.tensionerHeightAboveWrist - socketThickness
         phi = 0.5 * np.arctan2(-B, C - A)
 
         def getPointOnEllipse(theta):
@@ -1597,6 +1599,12 @@ class HandManipulator:
             )
             return (xCoor[0], yCoor[0])
 
+        def getTangentOnEllipse(theta):
+            dx = -a * np.sin(theta) * np.cos(phi) - b * np.cos(theta) * np.sin(phi)
+            dy = -a * np.sin(theta) * np.sin(phi) + b * np.cos(theta) * np.cos(phi)
+            slope = dy / dx
+            return float(slope)
+        
         numFingers = 4
         widthOfLost = 5.1
         slotLength = 24
@@ -1608,7 +1616,6 @@ class HandManipulator:
         theta = np.pi / 4
         circumference = integrate.quad(func, -theta, theta)[0]
         tolerance = 0.1
-        slotThickness = self.tensionerHeightAboveWrist - socketThickness
         jump = 20
         while abs(circumference - neededCircumference) > tolerance:
             if circumference - neededCircumference < 0:
@@ -1621,20 +1628,6 @@ class HandManipulator:
                 circumference = integrate.quad(
                     func, -theta - np.pi / 2, theta - np.pi / 2
                 )[0]
-        # x_coord = np.linspace(self.handMesh.bounds[0], self.handMesh.bounds[1], 300)
-        # y_coord = np.linspace(self.handMesh.bounds[4], self.handMesh.bounds[5], 300)
-        # X_coord, Y_coord = np.meshgrid(x_coord, y_coord)
-        # Z_coord = (
-        #     A * X_coord**2
-        #     + B * X_coord * Y_coord
-        #     + C * Y_coord**2
-        #     + D * X_coord
-        #     + E * Y_coord
-        # )
-        # contour = plt.contour(X_coord, Y_coord, Z_coord, levels=[1])
-        # paths = contour.collections[0].get_paths()
-        # path = paths[0]
-        # vertices = [np.array([p[0], 0, p[1]]) for p in path.vertices]
 
         vertices = []
         resolution = 30
@@ -1731,12 +1724,15 @@ class HandManipulator:
             auto_orient_normals=True,
         )
         thetaInterval = (theta * 2) / (numFingers + 1)
+
+
         for i in range(numFingers):
             slot = self.tensionerSlot()
             p = getPointOnEllipse(thetaInterval * (i + 1) - np.pi / 2 - theta)
+            p+=p/np.linalg.norm(p)*socketThickness
             point = np.array([p[0], slotLength / 2, p[1]])
             centerPoint = np.array([h[0], slotLength / 2, k[0]])
-            faceNormal = point - centerPoint
+            faceNormal = np.array([-getTangentOnEllipse(thetaInterval * (i + 1) - np.pi / 2 - theta), 0, 1])
             faceNormal /= np.linalg.norm(faceNormal)
             slot = self.moveAlignMesh(slot, point, faceNormal, vector)
             boolean = vtkPolyDataBooleanFilter()
@@ -1745,6 +1741,8 @@ class HandManipulator:
             boolean.SetOperModeToDifference()
             boolean.Update()
             tensioner = pv.wrap(boolean.GetOutput()).clean()
+            print(tensioner.is_manifold)
+
         vtkTensioner = tensioner.extract_geometry()
         mapper = vtk.vtkPolyDataMapper()
         mapper.SetInputData(vtkTensioner)

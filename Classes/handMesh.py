@@ -11,7 +11,13 @@ from lib import (
     vtkPolyDataBooleanFilter,
     ConvexHull,
     vtkAppendPolyData,
+    splprep,
+    splev,
+    bisplrep,
+    bisplev,
+    RBFInterpolator,
 )
+from pymeshfix import MeshFix
 
 
 class HandMesh:
@@ -25,7 +31,7 @@ class HandMesh:
 
         self.colors = vtk.vtkNamedColors()
         self.scalars = vtk.vtkFloatArray()
-        self.actor = self.genHandView("stlfiles\partialHand1.ply")
+        self.actor = self.genHandView("stlfiles/threequarterscalehand.ply")
         self.is_painting = False
 
         self.brush_radius = 10.0
@@ -34,7 +40,7 @@ class HandMesh:
         self.holesInCells = [0] * self.actor.GetMapper().GetInput().GetNumberOfCells()
         self.thickness = 2
 
-        self.fromPreviousDesign = True
+        self.fromPreviousDesign = False
         self.initTime = 0
 
         self.finalSocket = None
@@ -294,7 +300,7 @@ class HandMesh:
         socketShell = vtk.vtkPolyData()
         if self.fromPreviousDesign:
             reader = vtk.vtkPolyDataReader()
-            reader.SetFileName("oldDesigns/2ndgen.vtk")
+            reader.SetFileName("oldDesigns/3rdGen.vtk")
             reader.Update()
             self.finalSocket = reader.GetOutput()
         else:
@@ -355,8 +361,8 @@ class HandMesh:
 
             self.finalSocket = self.extrusion(socketShell)
             writer = vtk.vtkPolyDataWriter()
-            writer.SetFileName("oldDesigns/2ndgen.vtk")
-            writer.SetInputData(socketShell)
+            writer.SetFileName("oldDesigns/3rdGen.vtk")
+            writer.SetInputData(self.finalSocket)
             writer.Write()
 
         writer = vtk.vtkSTLWriter()
@@ -648,22 +654,30 @@ class HandMesh:
         newLayer.GetCellData().SetScalars(newScalars)
         return newLayer
 
+    def smoothBoundary(self, boundaryLoop, pvPolydata):
+        nSmooth = 25
+        for _ in range(nSmooth):
+            for i in range(len(boundaryLoop)):
+                currPoint = pvPolydata.points[boundaryLoop[i]]
+                lastPoint = pvPolydata.points[boundaryLoop[i - 1]]
+                nextPoint = pvPolydata.points[boundaryLoop[(i + 1) % len(boundaryLoop)]]
+                pvPolydata.points[boundaryLoop[i]] = (
+                    0.5 * currPoint + 0.25 * lastPoint + 0.25 * nextPoint
+                )
+        pvPolydata.plot(show_edges=True, edge_color="blue")
+        return pvPolydata
+
     def extrusion(self, polydata):
         boundaryExtractor = BoundaryExtractor(polydata)
         boundaryLoops = boundaryExtractor.produceOrderedLoops()
+        pvPolydata = pv.wrap(polydata)
+        for boundaryLoop in boundaryLoops:
+            pvPolydata = self.smoothBoundary(boundaryLoop, pvPolydata)
+            # print(", ".join([str(list(x)) for x in things]))
+        pvPolydata = pvPolydata.smooth_taubin(n_iter=100)
+        polydata.DeepCopy(pvPolydata)
+        polydata.Modified()
 
-        for i in range(len(boundaryLoops)):
-            boundaryLoop = boundaryLoops[i]
-            boundaryPoints = vtk.vtkPoints()
-            for pointId in boundaryLoop:
-                point = polydata.GetPoint(pointId)
-                boundaryPoints.InsertNextPoint(point)
-            boundaryPolydata = vtk.vtkPolyData()
-            boundaryPolydata.SetPoints(boundaryPoints)
-            self.plotPointCloud(
-                boundaryPolydata,
-                (0, 1 - (1 / len(boundaryLoops)) * i, i * (1 / len(boundaryLoops))),
-            )
         totalBoundaryPoints = vtk.vtkPoints()
         for idx in [pt for loop in boundaryLoops for pt in loop]:
             point = polydata.GetPoint(idx)
@@ -1223,7 +1237,7 @@ class HandMesh:
                 direction=crossedBiNormal,
                 radius=1,
                 height=initRadius * 3,
-            )
+            ).triangulate()
             conjoiningMeshes.append(cylinder)
 
             if k == len(carpals) - 1:
@@ -1249,7 +1263,11 @@ class HandMesh:
         for pointToMove, newPointPosition in newProportionalPositions.items():
             socket.points[pointToMove] = newPointPosition
 
-        socket = socket.smooth_taubin(n_iter=70, pass_band=0.5)
+        # socket = socket.subdivide(1, 'butterfly').smooth_taubin(n_iter=50, pass_band=0.5).compute_normals(
+        #         consistent_normals=True,
+        #         auto_orient_normals=True,
+        #     )
+        socket = socket.subdivide(1, "butterfly")
 
         for mesh in conjoiningMeshes:
             boolean = vtkPolyDataBooleanFilter()
@@ -1274,10 +1292,10 @@ class HandMesh:
             appendFilter.AddInputData(finger)
         appendFilter.Update()
 
-        writer = vtk.vtkSTLWriter()
-        writer.SetFileName("toBePrinted/totalStruct.stl")
-        writer.SetInputData(appendFilter.GetOutput())
-        writer.Write()
+        # writer = vtk.vtkSTLWriter()
+        # writer.SetFileName("toBePrinted/totalStruct.stl")
+        # writer.SetInputData(appendFilter.GetOutput())
+        # writer.Write()
 
         writer.SetFileName("imageAnalysisGeneration/socketStruct.stl")
         writer.SetInputData(self.finalSocket)
