@@ -11,13 +11,7 @@ from lib import (
     vtkPolyDataBooleanFilter,
     ConvexHull,
     vtkAppendPolyData,
-    splprep,
-    splev,
-    bisplrep,
-    bisplev,
-    RBFInterpolator,
 )
-from pymeshfix import MeshFix
 
 
 class HandMesh:
