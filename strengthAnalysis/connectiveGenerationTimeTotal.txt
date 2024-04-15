@@ -31,3 +31,8 @@ Time: 35.047786235809326 Num Fingers: 4
 Time: 34.71110463142395 Num Fingers: 4
 Time: 34.72914791107178 Num Fingers: 4
 Time: 34.82565999031067 Num Fingers: 4
+Time: 28.14517879486084 Num Fingers: 4
+Time: 28.596654653549194 Num Fingers: 4
+Time: 74.48624777793884 Num Fingers: 4
+Time: 67.48007249832153 Num Fingers: 4
+Time: 39.93417811393738 Num Fingers: 4

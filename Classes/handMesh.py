@@ -34,7 +34,7 @@ class HandMesh:
         self.holesInCells = [0] * self.actor.GetMapper().GetInput().GetNumberOfCells()
         self.thickness = 2
 
-        self.fromPreviousDesign = False
+        self.fromPreviousDesign = True
         self.initTime = 0
 
         self.finalSocket = None
@@ -649,7 +649,7 @@ class HandMesh:
         return newLayer
 
     def smoothBoundary(self, boundaryLoop, pvPolydata):
-        nSmooth = 25
+        nSmooth = 70
         for _ in range(nSmooth):
             for i in range(len(boundaryLoop)):
                 currPoint = pvPolydata.points[boundaryLoop[i]]
@@ -658,7 +658,6 @@ class HandMesh:
                 pvPolydata.points[boundaryLoop[i]] = (
                     0.5 * currPoint + 0.25 * lastPoint + 0.25 * nextPoint
                 )
-        pvPolydata.plot(show_edges=True, edge_color="blue")
         return pvPolydata
 
     def extrusion(self, polydata):
@@ -1003,7 +1002,11 @@ class HandMesh:
         return fixedMesh
 
     def genHandPortion(self, carpals, fingerMeshes, fingerInfo):
-        handMesh = pv.wrap(self.actor.GetMapper().GetInput()).triangulate()
+        handMesh = (
+            pv.wrap(self.actor.GetMapper().GetInput())
+            .triangulate()
+            .subdivide(2, "butterfly")
+        )
         jointRegionalPointIDXs = []
 
         socket = pv.wrap(self.finalSocket).triangulate()
@@ -1012,7 +1015,7 @@ class HandMesh:
         newProportionalPositions = {}
 
         initRadius = 8
-        layers = 10
+        layers = 11
 
         rayLength = max(
             [handMesh.bounds[2 * k + 1] - handMesh.bounds[2 * k] for k in range(3)]
@@ -1061,10 +1064,12 @@ class HandMesh:
             file1 = open("strengthAnalysis/connectiveGenerationTimes.txt", "a")
             file1.write(f"initial selection {i}: {time.time()-start}\n")
             file1.close()
+        jointRegionalPointIDXs = list(
+            set([x for xs in jointRegionalPointIDXs for x in xs])
+        )
 
         def selectPoints(
-            carpalOrigin,
-            carpalVector,
+            carpal,
             radius: int,
             color=(0.3, 0.2, 1),
             size=5,
@@ -1122,9 +1127,8 @@ class HandMesh:
                 n = np.array(fingerVector) / np.linalg.norm(np.array(fingerVector))
                 newPos = p - n * np.dot(u, n)
                 newProportionalPositions[idx] = newPos
-                for j in range(jointIdx, totalJointIds):
-                    if idx in jointRegionalPointIDXs[j]:
-                        jointRegionalPointIDXs[j].remove(idx)
+                if idx in jointRegionalPointIDXs:
+                    jointRegionalPointIDXs.remove(idx)
                 distances.append(np.linalg.norm(newPos - p))
                 diskOfPoints.append(newPos)
                 initDistances.append(np.linalg.norm(newPos - np.array(jointOrigin)))
@@ -1143,61 +1147,99 @@ class HandMesh:
             self.renderWindow.Render()
             return circumferenceOfPoints
 
-        def proportionallyMovePoints(
-            fingerVector: list,
-            jointOrigin: list,
-            jointIdx,
-            circumferenceOfPoints,
-        ):
-            tree = cKDTree(circumferenceOfPoints[0])
-            for idx in jointRegionalPointIDXs[jointIdx]:
-                p = np.array(socket.points[idx])
-                u = p - np.array(jointOrigin)
+        def findDistanceP(p, fingerVector, jointOrigin):
+            u = p - np.array(jointOrigin)
+            n = np.array(fingerVector) / np.linalg.norm(np.array(fingerVector))
+            projectedPos = p - n * np.dot(u, n)
+            distance = np.linalg.norm(projectedPos - np.array(jointOrigin))
+            return distance
 
-                n = np.array(fingerVector) / np.linalg.norm(np.array(fingerVector))
-                projectedPos = p - n * np.dot(u, n)
-                distance2 = np.linalg.norm(projectedPos - np.array(jointOrigin))
+        def proportionallyMovePoints(carpals, jointIdx, circumferenceOfPoints):
+            tree = cKDTree(circumferenceOfPoints[jointIdx][0])
+            n1 = (jointIdx - 1) % len(carpals)
+            n2 = (jointIdx + 1) % len(carpals)
+            neighborTree1 = cKDTree(circumferenceOfPoints[n1][0])
+            neighborTree2 = cKDTree(circumferenceOfPoints[n2][0])
+
+            for idx in jointRegionalPointIDXs:
+                p = np.array(socket.points[idx])
+                n = np.array(carpals[jointIdx]["normal"]) / np.linalg.norm(
+                    np.array(carpals[jointIdx]["normal"])
+                )
+                distanceP = findDistanceP(
+                    p, carpals[jointIdx]["normal"], carpals[jointIdx]["center"]
+                )
+                distanceP1 = findDistanceP(
+                    p, carpals[n1]["normal"], carpals[n1]["center"]
+                )
+                distanceP2 = findDistanceP(
+                    p, carpals[n2]["normal"], carpals[n2]["center"]
+                )
 
                 _, closestPointIdx = tree.query(p)
-                intensity = circumferenceOfPoints[1][closestPointIdx]
-                distance1 = circumferenceOfPoints[2][closestPointIdx]
+                intensity = circumferenceOfPoints[jointIdx][1][closestPointIdx]
+                distance = circumferenceOfPoints[jointIdx][2][closestPointIdx]
+
+                _, closestPointIdx = neighborTree1.query(p)
+                intensity1 = circumferenceOfPoints[n1][1][closestPointIdx]
+                distance11 = circumferenceOfPoints[n1][2][closestPointIdx]
+
+                _, closestPointIdx = neighborTree2.query(p)
+                intensity2 = circumferenceOfPoints[n2][1][closestPointIdx]
+                distance21 = circumferenceOfPoints[n2][2][closestPointIdx]
+
                 # factor = distance / ((np.linalg.norm(u) / distance) ** 2)
-                factor = intensity * (distance1**2) / (distance2**2)
-                newPos = p + n * factor
-                if idx in newProportionalPositions:
-                    newProportionalPositions[idx] = (
-                        newProportionalPositions[idx] + newPos
-                    ) / 2
-                else:
+                factor = 1
+                if distanceP1 > distanceP and distanceP2 > distanceP:
+                    if distanceP1 > distanceP2:
+                        secondUsedIntensity = intensity2
+                        secondUsedDistance = distance21
+                        secondUsedPDistance = distanceP2
+                    else:
+                        secondUsedIntensity = intensity1
+                        secondUsedDistance = distance11
+                        secondUsedPDistance = distanceP1
+
+                    ratio = 0.5 * distanceP / secondUsedPDistance
+                    factor = (1 - ratio) * intensity * (distance**2) / (
+                        distanceP**2
+                    ) + ratio * secondUsedIntensity * (secondUsedDistance**2) / (
+                        secondUsedPDistance**2
+                    )
+                    # factor = intensity * (distance**2) / (distanceP**2)
+                    print(f"f: {factor} | r: {ratio}")
+                    newPos = p + n * factor
+
+                    # if idx in newProportionalPositions:
+                    #     newProportionalPositions[idx] = (
+                    #         0.5 * newProportionalPositions[idx] + 0.5 * newPos
+                    #     )
+                    # else:
                     newProportionalPositions[idx] = newPos
 
         conjoiningMeshes = []
 
+        circumferences = []
         for k, carpal in enumerate(carpals):
-            origin = carpal["center"] - carpal["normal"] / np.linalg.norm(
-                carpal["normal"]
-            ) * (fingerInfo["connectorLength"] + 3)
-            origin = carpal["center"]
             listOfIds = selectPoints(
-                carpalOrigin=carpal["center"],
-                carpalVector=carpal["normal"],
+                carpal=carpal,
                 radius=initRadius - 0.4,
                 color=(0.5, 1, 1),
-                size=10,
+                size=initRadius,
             )
-
             circumferenceOfPoints = moveSelectedPointsToJoints(
                 pointIDs=listOfIds,
                 jointIdx=k,
                 totalJointIds=len(carpals),
                 fingerVector=carpal["normal"],
-                jointOrigin=origin,
+                jointOrigin=carpal["center"],
             )
+            circumferences.append(circumferenceOfPoints)
 
+        for k, carpal in enumerate(carpals):
             proportionallyMovePoints(
-                fingerVector=carpal["normal"],
-                jointOrigin=origin,
-                circumferenceOfPoints=circumferenceOfPoints,
+                carpals=carpals,
+                circumferenceOfPoints=circumferences,
                 jointIdx=k,
             )
 
@@ -1257,12 +1299,13 @@ class HandMesh:
         for pointToMove, newPointPosition in newProportionalPositions.items():
             socket.points[pointToMove] = newPointPosition
 
-        # socket = socket.subdivide(1, 'butterfly').smooth_taubin(n_iter=50, pass_band=0.5).compute_normals(
-        #         consistent_normals=True,
-        #         auto_orient_normals=True,
-        #     )
-        socket = socket.subdivide(1, "butterfly")
-
+        socket.plot()
+        socket = socket.compute_normals(
+            consistent_normals=True,
+            auto_orient_normals=True,
+        ).smooth_taubin()
+        # socket = socket.subdivide(1, "butterfly")
+        socket.plot(show_edges=True)
         for mesh in conjoiningMeshes:
             boolean = vtkPolyDataBooleanFilter()
             boolean.SetInputData(0, socket)
