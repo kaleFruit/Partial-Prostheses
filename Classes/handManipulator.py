@@ -445,7 +445,7 @@ class HandManipulator:
 
         self.clearOldFingers()
         stringHoleRadius = 1
-        fingerColor = (0, 0.3, 0)
+        fingerColor = (0.8, 0.8, 0.8)
 
         for jointListIdx in range(len(self.jointsList)):
             stringLoc, self.tensionerHeightAboveWrist = self.findCorrectActuation(
@@ -1604,7 +1604,7 @@ class HandManipulator:
             dy = -a * np.sin(theta) * np.sin(phi) + b * np.cos(theta) * np.cos(phi)
             slope = dy / dx
             return float(slope)
-        
+
         numFingers = 4
         widthOfLost = 5.1
         slotLength = 24
@@ -1725,14 +1725,19 @@ class HandManipulator:
         )
         thetaInterval = (theta * 2) / (numFingers + 1)
 
-
         for i in range(numFingers):
             slot = self.tensionerSlot()
             p = getPointOnEllipse(thetaInterval * (i + 1) - np.pi / 2 - theta)
-            p+=p/np.linalg.norm(p)*socketThickness
+            p += p / np.linalg.norm(p) * socketThickness
             point = np.array([p[0], slotLength / 2, p[1]])
             centerPoint = np.array([h[0], slotLength / 2, k[0]])
-            faceNormal = np.array([-getTangentOnEllipse(thetaInterval * (i + 1) - np.pi / 2 - theta), 0, 1])
+            faceNormal = np.array(
+                [
+                    -getTangentOnEllipse(thetaInterval * (i + 1) - np.pi / 2 - theta),
+                    0,
+                    1,
+                ]
+            )
             faceNormal /= np.linalg.norm(faceNormal)
             slot = self.moveAlignMesh(slot, point, faceNormal, vector)
             boolean = vtkPolyDataBooleanFilter()
@@ -1747,7 +1752,7 @@ class HandManipulator:
         mapper = vtk.vtkPolyDataMapper()
         mapper.SetInputData(vtkTensioner)
         actor = vtk.vtkActor()
-        actor.GetProperty().SetColor(0.5, 0.3, 1)
+        actor.GetProperty().SetColor(0.7, 0.7, 1)
         actor.SetMapper(mapper)
         self.renderer.AddActor(actor)
         self.renderWindow.Render()

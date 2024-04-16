@@ -191,6 +191,15 @@ class GUI(Qt.QMainWindow):
         density.sliderMoved.connect(self.densityChanger)
         vbox.addWidget(density)
 
+        label = Qt.QLabel("Change Hard Socket Clip Height:")
+        vbox.addWidget(label)
+        plane = QtWidgets.QSlider()
+        plane.setGeometry(QtCore.QRect(190, 100, 160, 16))
+        plane.setValue(55)
+        plane.setOrientation(QtCore.Qt.Horizontal)
+        plane.sliderMoved.connect(self.planeHeight)
+        vbox.addWidget(plane)
+
         outerBox.addLayout(vbox)
 
         outerBox.addItem(
@@ -397,6 +406,9 @@ class GUI(Qt.QMainWindow):
     def brushSizer(self, p):
         self.handMesh.brushSizer(p)
 
+    def planeHeight(self, p):
+        self.handMesh.changePlaneHeight(p)
+
     def toggleSocket(self, state):
         self.handMesh.socketMode(state)
         self.socketMode = state
@@ -425,7 +437,7 @@ class GUI(Qt.QMainWindow):
         writer.SetInputData(self.handMesh.getHand())
         writer.Write()
 
-        self.handMesh.genHandPortion(
+        self.handMesh.genHardSocket(
             self.handManipulator.getJoints(),
             self.handManipulator.getFingerMeshes(),
             self.handManipulator.getFingerInfo(),
