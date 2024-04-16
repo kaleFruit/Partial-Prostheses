@@ -403,11 +403,6 @@ class HandMesh:
             writer.SetInputData(self.finalSocket)
             writer.Write()
 
-        writer = vtk.vtkSTLWriter()
-        writer.SetFileName("finalSocket.stl")
-        writer.SetInputData(self.finalSocket)
-        writer.Write()
-
         mapper = vtk.vtkPolyDataMapper()
         mapper.SetInputData(self.finalSocket)
         actor = vtk.vtkActor()
@@ -1548,12 +1543,12 @@ class HandMesh:
         appendFilter.Update()
 
         writer = vtk.vtkSTLWriter()
-        writer.SetFileName("imageAnalysisGeneration/hardSocket.stl")
+        writer.SetFileName("toBePrinted/hardSocket.stl")
         writer.SetInputData(self.finalSocketHard)
         writer.Write()
 
         writer = vtk.vtkSTLWriter()
-        writer.SetFileName("imageAnalysisGeneration/softSocket.stl")
+        writer.SetFileName("toBePrinted/softSocket.stl")
         writer.SetInputData(self.finalSocket)
         writer.Write()
 

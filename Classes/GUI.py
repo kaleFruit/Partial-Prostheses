@@ -421,7 +421,7 @@ class GUI(Qt.QMainWindow):
     def generateHardSocket(self):
         writer = vtk.vtkSTLWriter()
         for i, finger in enumerate(self.handManipulator.getFingerMeshes()):
-            writer.SetFileName(f"imageAnalysisGeneration/fingerStruct{i}.stl")
+            writer.SetFileName(f"toBePrinted/fingerStruct{i}.stl")
             writer.SetInputData(finger)
             writer.Write()
 
@@ -429,11 +429,11 @@ class GUI(Qt.QMainWindow):
         for connector in self.handManipulator.getConnectors():
             appender.AddInputData(connector)
         appender.Update()
-        writer.SetFileName("imageAnalysisGeneration/connectorStruct.stl")
+        writer.SetFileName("toBePrinted/connectorStruct.stl")
         writer.SetInputData(appender.GetOutput())
         writer.Write()
 
-        writer.SetFileName("imageAnalysisGeneration/handMesh.stl")
+        writer.SetFileName("toBePrinted/handMesh.stl")
         writer.SetInputData(self.handMesh.getHand())
         writer.Write()
 
