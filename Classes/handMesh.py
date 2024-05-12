@@ -32,7 +32,8 @@ class HandMesh:
         self.enclosed_points = vtk.vtkSelectEnclosedPoints()
         self.socketIds = [0] * self.actor.GetMapper().GetInput().GetNumberOfCells()
         self.holesInCells = [0] * self.actor.GetMapper().GetInput().GetNumberOfCells()
-        self.thickness = 2
+        self.thickness = 1.5
+        self.elasticString= True
 
         self.fromPreviousDesign = True
         self.initTime = 0
@@ -1515,8 +1516,7 @@ class HandMesh:
             ).triangulate()
             conjoiningMeshes.append(wedge)
 
-            if True:
-
+            if self.elasticString:
                 ring = pv.ParametricTorus(ringradius=2.25, crosssectionradius=0.8)
 
                 angledVector = carpal["normal"] / np.linalg.norm(
@@ -1527,16 +1527,6 @@ class HandMesh:
                     carpal["normal"] / np.linalg.norm(carpal["normal"]),
                     crossedBiNormal / np.linalg.norm(crossedBiNormal),
                 )
-                # elasticHolder = (
-                #     pv.read("stlfiles/elasticHolder.stl")
-                #     .clean()
-                #     .triangulate()
-                #     .compute_normals(
-                #         non_manifold_traversal=False,
-                #         consistent_normals=True,
-                #         auto_orient_normals=True,
-                #     )
-                # )
                 location = (
                     connectorPieceLocation
                     + (3 * initRadius / 4)

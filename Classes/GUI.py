@@ -163,6 +163,7 @@ class GUI(Qt.QMainWindow):
 
         rbPaint = QtWidgets.QRadioButton("Paint brush")
         rbPaint.setGeometry(QtCore.QRect(180, 120, 95, 20))
+        rbPaint.setChecked(True)
         vbox.addWidget(rbPaint)
         rbPaint.toggled.connect(lambda: self.socketToolSelected(0))
         rbEraser = QtWidgets.QRadioButton("Eraser")
@@ -278,10 +279,16 @@ class GUI(Qt.QMainWindow):
         fingerActivationBox.addLayout(fingerSubBoxes)
 
         fingerSettingsBox = Qt.QVBoxLayout()
+
         rightHeader = Qt.QLabel("Finger Settings")
         rightHeader.setAlignment(QtCore.Qt.AlignCenter)
         rightHeader.setStyleSheet("QLabel { font-size: 20px;}")
         fingerSettingsBox.addWidget(rightHeader)
+
+        cb = QtWidgets.QCheckBox("Add Elastic String")
+        cb.stateChanged.connect(self.addElastic)
+        cb.setChecked(True)
+        fingerSettingsBox.addWidget(cb)
 
         fingerSettingsBox.addWidget(Qt.QLabel("Set Wrist Actuation Rotation:"))
         wristRotation = QtWidgets.QLineEdit()
@@ -404,6 +411,10 @@ class GUI(Qt.QMainWindow):
     def planeHeight(self, p):
         self.handMesh.changePlaneHeight(p)
 
+    def addElastic(self, state):
+        self.handManipulator.elastic = state
+        self.handMesh.elasticString = state
+
     def toggleSocket(self, state):
         self.handMesh.socketMode(state)
         self.socketMode = state
@@ -436,6 +447,7 @@ class GUI(Qt.QMainWindow):
             self.handManipulator.getJoints(),
             self.handManipulator.getFingerMeshes(),
             self.handManipulator.getFingerInfo(),
+            s,
         )
 
     def setFingerWidth(self, val):
