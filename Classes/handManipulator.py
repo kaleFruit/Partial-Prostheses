@@ -147,6 +147,8 @@ class HandManipulator:
         self.wristRotation = np.pi / 2
         self.wristMinorRadius = 11
         self.tensionerHeightAboveWrist = 2
+        self.elastic = True
+        self.elasticHoleRadius = 0.75
 
     @property
     def jointsList(self):
@@ -481,7 +483,7 @@ class HandManipulator:
                     direction = vector / fingerBodyLength
 
                     topRadii = 5
-                    bottomRadii = 4
+                    bottomRadii = 3
                     fingerBodyHeight = self.fingerHeight
                     fingerBodyWidth = self.fingerWidth
                     resolution = 16
@@ -489,22 +491,47 @@ class HandManipulator:
                     connectorRadius = self.connectorRadius
                     connectorLength = 5.8
                     connectorDistanceBelowMidline = 1.5
+                    part = None
 
-                    part = self.generateFingerPartWithConnectorCut(
-                        resolution=resolution,
-                        topRadii=topRadii,
-                        bottomRadii=bottomRadii,
-                        fingerBodyHeight=fingerBodyHeight,
-                        fingerBodyWidth=fingerBodyWidth,
-                        stringHoleRadius=stringHoleRadius,
-                        fingerBodyLength=fingerBodyLength,
-                        connectorRadius=connectorRadius,
-                        connectorLength=connectorLength,
-                        connectorThickness=connectorThickness,
-                        connectorDistanceBelowMidline=connectorDistanceBelowMidline,
-                        stringLoc=stringLoc,
-                    )
+                    if jointIdx == len(self.jointsList[jointListIdx]) - 1:
+                        part = self.genFingerTip(
+                            resolution=resolution,
+                            topRadii=topRadii,
+                            bottomRadii=bottomRadii,
+                            fingerBodyHeight=fingerBodyHeight,
+                            fingerBodyWidth=fingerBodyWidth,
+                            stringHoleRadius=stringHoleRadius,
+                            fingerBodyLength=fingerBodyLength,
+                            connectorRadius=connectorRadius,
+                            connectorLength=connectorLength,
+                            connectorThickness=connectorThickness,
+                            connectorDistanceBelowMidline=connectorDistanceBelowMidline,
+                            stringLoc=stringLoc,
+                        )
+                    else:
+                        part = self.generateFingerPartWithConnectorCut(
+                            resolution=resolution,
+                            topRadii=topRadii,
+                            bottomRadii=bottomRadii,
+                            fingerBodyHeight=fingerBodyHeight,
+                            fingerBodyWidth=fingerBodyWidth,
+                            stringHoleRadius=stringHoleRadius,
+                            fingerBodyLength=fingerBodyLength,
+                            connectorRadius=connectorRadius,
+                            connectorLength=connectorLength,
+                            connectorThickness=connectorThickness,
+                            connectorDistanceBelowMidline=connectorDistanceBelowMidline,
+                            stringLoc=stringLoc,
+                            createBackFace=False,
+                        )
 
+                    if self.elastic:
+                        part = self.genElastic(
+                            part,
+                            elasticHoleRadius=self.elasticHoleRadius,
+                            fingerLength=fingerBodyLength,
+                            fingerHeight=fingerBodyHeight,
+                        )
                     part = self.moveAlignMesh(part, midpoint, direction, normal)
                     vtk_polydata = part.extract_geometry()
                     mapper = vtk.vtkPolyDataMapper()
@@ -514,7 +541,7 @@ class HandManipulator:
                     actor.SetMapper(mapper)
                     actor.GetProperty().SetColor(fingerColor)
                     tempMeshList.append(actor)
-                    file1 = open("strengthAnalysis/fingerGenerationTimes.txt", "a")
+                    file1 = open("strengthAnalysis/fingerGenerationTimes2.txt", "a")
                     file1.write(f"{length} {time.time()-start}\n")
                     file1.close()
             self.fingerActors.append(tempMeshList)
@@ -562,7 +589,34 @@ class HandManipulator:
 
         self.displayFingerMeshes()
 
-    def generateFingerPartWithConnectorCut(
+    def genElastic(self, mesh, elasticHoleRadius, fingerLength, fingerHeight):
+        hole = (
+            self.genCylinder(elasticHoleRadius, 10, fingerLength+3)
+            .compute_normals()
+            .subdivide(nsub=3)
+        )
+        hole = self.moveAlignMesh(hole, (0, -fingerHeight/2 + elasticHoleRadius+0.75,0), (0, 0, 1), (0, 1, 0))
+        boolean = vtkPolyDataBooleanFilter()
+        boolean.SetInputData(0, mesh)
+        boolean.SetInputData(1, hole)
+        boolean.SetOperModeToDifference()
+        boolean.Update()
+        return (
+            pv.wrap(boolean.GetOutput())
+            .triangulate()
+            .compute_normals(
+                non_manifold_traversal=False,
+                consistent_normals=True,
+                auto_orient_normals=True,
+            )
+            .clean().compute_normals(
+                non_manifold_traversal=False,
+                consistent_normals=True,
+                auto_orient_normals=True,
+            )
+        )
+
+    def genFingerTip(
         self,
         resolution,
         topRadii,
@@ -577,6 +631,830 @@ class HandManipulator:
         connectorDistanceBelowMidline,
         stringLoc,
     ):
+        def stringHoleFingerTip(radius, res, height):
+            totalVerts = []
+            totalFaces = []
+            thetaInterval = 2 * np.pi / res
+            angleVector = height * np.array([0, -1, 1])
+            for i in range(res):
+                totalVerts.append(
+                    (
+                        radius * np.cos(thetaInterval * i),
+                        radius * np.sin(thetaInterval * i),
+                        -height,
+                    )
+                )
+            for i in range(res):
+                p = np.matrix((radius * np.sin(thetaInterval * i), 0))
+                rotMat = np.matrix(
+                    [[2**0.5 / 2, 2**0.5 / 2], [2**0.5 / 2, -(2**0.5) / 2]]
+                )
+                p = rotMat * np.transpose(p)
+                finalP = np.array(
+                    (radius * np.cos(thetaInterval * i), p.flat[0], p.flat[1])
+                )
+                totalVerts.append(finalP)
+            for i in range(res):
+                newPoint = np.array(totalVerts[res + i]) + angleVector
+                totalVerts.append(newPoint)
+            for i in range(res):
+                totalFaces.append((3, i, (i + 1) % res, i + res))
+                totalFaces.append((3, i + res, (i + 1) % res + res, (i + 1) % res))
+
+                totalFaces.append((3, i + res, (i + 1) % res + res, i + res + res))
+                totalFaces.append(
+                    (3, i + res + res, (i + 1) % res + res + res, (i + 1) % res + res)
+                )
+
+            totalVerts.append((0, 0, -height / 2))
+            totalVerts.append(np.array((0, 0, 0)) + angleVector)
+            for i in range(res):
+                totalFaces.append((3, i, len(totalVerts) - 2, (i + 1) % res))
+                totalFaces.append(
+                    (3, i + 2 * res, len(totalVerts) - 1, (i + 1) % res + 2 * res)
+                )
+            mesh = pv.PolyData(totalVerts, totalFaces)
+            return mesh
+
+        def genFingerTipPart(
+            resolution,
+            topRadii,
+            bottomRadii,
+            fingerBodyHeight,
+            fingerBodyWidth,
+            fingerBodyLength,
+        ):
+            def endFaceTop(
+                resolution, topRadii, fingerBodyHeight, fingerBodyWidth, z, bottomRadii
+            ):
+                newPoints = []
+                thetaInterval = np.pi / (resolution)
+                for i in range(2):
+                    batch = []
+                    theta = 0
+                    while theta < np.pi / 2 and len(batch) < resolution / 2:
+                        radius = fingerBodyWidth / 2 / np.cos(theta)
+                        while (
+                            radius * np.sin(theta) < fingerBodyHeight / 2 - topRadii
+                            and len(batch) < resolution / 2
+                        ):
+                            batch.append(
+                                (
+                                    radius * np.cos(theta) * ((-1) ** i),
+                                    radius * np.sin(theta),
+                                    z,
+                                )
+                            )
+                            theta += thetaInterval
+                            radius = fingerBodyWidth / 2 / np.cos(theta)
+                        while (
+                            radius * np.sin(theta) < fingerBodyHeight / 2
+                            and len(batch) < resolution / 2
+                        ):
+                            batch.append(
+                                (
+                                    radius * np.cos(theta) * ((-1) ** i),
+                                    radius * np.sin(theta),
+                                    z,
+                                )
+                            )
+                            theta += thetaInterval
+                        radius = fingerBodyHeight / 2 / np.sin(theta)
+                        while (
+                            radius * np.cos(theta) > 0 and len(batch) < resolution / 2
+                        ):
+                            batch.append(
+                                (
+                                    radius * np.cos(theta) * ((-1) ** i),
+                                    radius * np.sin(theta),
+                                    z,
+                                )
+                            )
+                            theta += thetaInterval
+                            radius = fingerBodyHeight / 2 / np.sin(theta)
+                    if i % 2 == 1:
+                        batch.reverse()
+                    newPoints.extend(batch)
+                underSide = []
+                for i in range(2):
+                    batch = []
+                    theta = 0
+                    while theta < np.pi / 2 and len(batch) < resolution / 2:
+                        radius = fingerBodyWidth / 2 / np.cos(theta)
+                        while (
+                            radius * np.sin(theta) < fingerBodyHeight / 2 - bottomRadii
+                            and len(batch) < resolution / 2
+                        ):
+                            batch.append(
+                                (
+                                    radius * np.cos(theta) * ((-1) ** i),
+                                    -radius * np.sin(theta),
+                                    z,
+                                )
+                            )
+                            theta += thetaInterval
+                            radius = fingerBodyWidth / 2 / np.cos(theta)
+                        while (
+                            radius * np.sin(theta) < fingerBodyHeight / 2
+                            and len(batch) < resolution / 2
+                        ):
+                            batch.append(
+                                (
+                                    radius * np.cos(theta) * ((-1) ** i),
+                                    -radius * np.sin(theta),
+                                    z,
+                                )
+                            )
+                            theta += thetaInterval
+                        radius = fingerBodyHeight / 2 / np.sin(theta)
+                        while (
+                            radius * np.cos(theta) > 0 and len(batch) < resolution / 2
+                        ):
+                            batch.append(
+                                (
+                                    radius * np.cos(theta) * ((-1) ** i),
+                                    -radius * np.sin(theta),
+                                    z,
+                                )
+                            )
+                            theta += thetaInterval
+                            radius = fingerBodyHeight / 2 / np.sin(theta)
+                    if i % 2 == 1:
+                        batch.reverse()
+                        batch.pop(0)
+                    underSide.extend(batch)
+                underSide.reverse()
+                newPoints.extend(underSide)
+
+                return np.array(newPoints)
+
+            totalVerts = []
+            totalFaces = []
+            zRes = 20
+            zHeight = fingerBodyLength / 2
+            for i in range(zRes):
+                z = zHeight / zRes * i
+                # factor = 1 / (1 + np.e ** (i - zRes + 0.5))
+                factor = -(0.65 ** (-i + zRes)) + 1
+                if i == 0:
+                    factor = 1
+                verts = endFaceTop(
+                    resolution=resolution,
+                    topRadii=topRadii,
+                    bottomRadii=bottomRadii,
+                    fingerBodyHeight=fingerBodyHeight * factor,
+                    fingerBodyWidth=fingerBodyWidth * factor,
+                    z=z,
+                )
+                totalVerts.extend(verts)
+            lenFaceVerts = len(verts)
+            for i in range(zRes - 1):
+                offset = lenFaceVerts * i
+                for j in range(lenFaceVerts):
+                    totalFaces.append(
+                        (
+                            3,
+                            j + offset,
+                            (j + 1) % lenFaceVerts + offset,
+                            j + lenFaceVerts + offset,
+                        )
+                    )
+                    totalFaces.append(
+                        (
+                            3,
+                            j + lenFaceVerts + offset,
+                            (j + 1) % lenFaceVerts + lenFaceVerts + offset,
+                            (j + 1) % lenFaceVerts + offset,
+                        )
+                    )
+            totalVerts.append((0, 0, 0))
+            totalVerts.append((0, 0, z))
+            offset = len(totalVerts) - 2 - len(verts)
+            for i in range(len(verts)):
+                totalFaces.append((3, len(totalVerts) - 2, i, (i + 1) % len(verts)))
+                totalFaces.append(
+                    (3, len(totalVerts) - 1, i + offset, (i + 1) % len(verts) + offset)
+                )
+            fingerTip = pv.PolyData(totalVerts, totalFaces)
+            return fingerTip
+
+        def genBase(
+            resolution,
+            topRadii,
+            bottomRadii,
+            fingerBodyHeight,
+            fingerBodyWidth,
+            stringHoleRadius,
+            fingerBodyLength,
+            connectorRadius,
+            connectorLength,
+            connectorThickness,
+            connectorDistanceBelowMidline,
+        ):
+
+            def endFaceTop(
+                resolution,
+                topRadii,
+                bottomRadii,
+                fingerBodyHeight,
+                fingerBodyWidth,
+                holeRadius,
+            ):
+                newPoints = []
+                faces = []
+                thetaInterval = np.pi / (resolution)
+                offset = 0
+                for i in range(2):
+                    batch = []
+                    theta = 0
+                    while theta < np.pi / 2 and len(batch) < resolution / 2:
+                        radius = fingerBodyWidth / 2 / np.cos(theta)
+                        while (
+                            radius * np.sin(theta) < fingerBodyHeight / 2 - topRadii
+                            and len(batch) < resolution / 2
+                        ):
+                            batch.append(
+                                (
+                                    radius * np.cos(theta) * ((-1) ** i),
+                                    radius * np.sin(theta),
+                                    radius * np.sin(theta),
+                                )
+                            )
+                            theta += thetaInterval
+                            radius = fingerBodyWidth / 2 / np.cos(theta)
+                        while (
+                            radius * np.sin(theta) < fingerBodyHeight / 2
+                            and len(batch) < resolution / 2
+                        ):
+                            batch.append(
+                                (
+                                    radius * np.cos(theta) * ((-1) ** i),
+                                    radius * np.sin(theta),
+                                    radius * np.sin(theta),
+                                )
+                            )
+                            theta += thetaInterval
+                        radius = fingerBodyHeight / 2 / np.sin(theta)
+                        while (
+                            radius * np.cos(theta) > 0 and len(batch) < resolution / 2
+                        ):
+                            batch.append(
+                                (
+                                    radius * np.cos(theta) * ((-1) ** i),
+                                    radius * np.sin(theta),
+                                    radius * np.sin(theta),
+                                )
+                            )
+                            theta += thetaInterval
+                            radius = fingerBodyHeight / 2 / np.sin(theta)
+                    if i % 2 == 1:
+                        batch.reverse()
+                    # batch.pop(0)
+                    newPoints.extend(batch)
+                offset = 0
+                for i in range(resolution - 1):
+                    faces.append((3, 0, i + offset, i + 1 + offset))
+                return (np.array(newPoints), faces)
+
+            def endFaceBottom(
+                resolution,
+                topRadii,
+                bottomRadii,
+                fingerBodyHeight,
+                fingerBodyWidth,
+                holeRadius,
+            ):
+                newPoints = []
+                faces = []
+                thetaInterval = np.pi / (resolution)
+                for i in range(2):
+                    batch = []
+                    theta = 0
+                    while theta < np.pi / 2 and len(batch) < resolution / 2:
+                        radius = fingerBodyWidth / 2 / np.cos(theta)
+                        while (
+                            radius * np.sin(theta) < fingerBodyHeight / 2 - bottomRadii
+                        ):
+                            theta += thetaInterval
+                            radius = fingerBodyWidth / 2 / np.cos(theta)
+                        while (
+                            radius * np.sin(theta) < fingerBodyHeight / 2
+                            and len(batch) < resolution / 2
+                        ):
+                            batch.append(
+                                (
+                                    radius * np.cos(theta) * ((-1) ** i),
+                                    -radius * np.sin(theta),
+                                    0,
+                                )
+                            )
+                            theta += thetaInterval
+                        radius = fingerBodyHeight / 2 / np.sin(theta)
+                        while (
+                            radius * np.cos(theta) > 0 and len(batch) < resolution / 2
+                        ):
+                            batch.append(
+                                (
+                                    radius * np.cos(theta) * ((-1) ** i),
+                                    -radius * np.sin(theta),
+                                    0,
+                                )
+                            )
+                            theta += thetaInterval
+                            radius = fingerBodyHeight / 2 / np.sin(theta)
+                    if i % 2 == 1:
+                        batch.reverse()
+                        batch.pop(0)
+                    newPoints.extend(batch)
+                # newPoints.pop(0)
+                # newPoints.pop()
+                return np.array(newPoints)
+
+            def createConnector(
+                endRadius,
+                length,
+                thickness,
+                connectorDistanceBelowMidline,
+                resolutionBody=8,
+                resolutionEnd=8,
+            ):
+                verticesTop = []
+                verticesBottom = []
+                verticesTop.append((0, thickness / 2, 0))
+                verticesTop.append((0, thickness / 2, length / 2))
+                currTheta = np.pi - np.arcsin(thickness / 2 / endRadius)
+                thetaInterval = 2 * currTheta / (resolutionEnd + 1)
+                currTheta -= thetaInterval
+                for _ in range(int(resolutionEnd / 2)):
+                    verticesTop.append(
+                        (
+                            0,
+                            endRadius * np.sin(currTheta),
+                            endRadius * np.cos(currTheta) + length / 2 + endRadius,
+                        )
+                    )
+                    verticesBottom.append(
+                        (
+                            0,
+                            endRadius
+                            * np.sin(
+                                currTheta - thetaInterval * (int(resolutionEnd / 2))
+                            ),
+                            endRadius
+                            * np.cos(
+                                currTheta - thetaInterval * (int(resolutionEnd / 2))
+                            )
+                            + length / 2
+                            + endRadius,
+                        )
+                    )
+                    currTheta -= thetaInterval
+                for i, vertex in enumerate(verticesTop):
+                    verticesTop[i] = (
+                        vertex[0],
+                        vertex[1] - connectorDistanceBelowMidline,
+                        vertex[2],
+                    )
+                verticesBottom.append((0, -thickness / 2, length / 2))
+                verticesBottom.append((0, -thickness / 2, 0))
+
+                for i, vertex in enumerate(verticesBottom):
+                    verticesBottom[i] = (
+                        vertex[0],
+                        vertex[1] - connectorDistanceBelowMidline,
+                        vertex[2],
+                    )
+
+                return verticesTop, verticesBottom
+
+            totalVerts = []
+            totalFaces = []
+            frontVerticesTop, facesFrontTop = endFaceTop(
+                resolution=resolution,
+                topRadii=topRadii,
+                bottomRadii=bottomRadii,
+                fingerBodyHeight=fingerBodyHeight,
+                fingerBodyWidth=fingerBodyWidth,
+                holeRadius=stringHoleRadius,
+            )
+            frontVerticesBottom = endFaceBottom(
+                resolution=resolution,
+                topRadii=topRadii,
+                bottomRadii=bottomRadii,
+                fingerBodyHeight=fingerBodyHeight,
+                fingerBodyWidth=fingerBodyWidth,
+                holeRadius=stringHoleRadius,
+            )
+            vertsLeftTop, vertsLeftBottom = createConnector(
+                endRadius=connectorRadius,
+                length=connectorLength,
+                thickness=connectorThickness,
+                connectorDistanceBelowMidline=connectorDistanceBelowMidline,
+            )
+            for i, vertex in enumerate(vertsLeftTop):
+                vertsLeftTop[i] = (
+                    vertex[0] - fingerBodyWidth / 2,
+                    vertex[1],
+                    vertex[2],
+                )
+            for i, vertex in enumerate(vertsLeftBottom):
+                vertsLeftBottom[i] = (
+                    vertex[0] - fingerBodyWidth / 2,
+                    vertex[1],
+                    vertex[2],
+                )
+            vertsRightTop, vertsRightBottom = createConnector(
+                endRadius=connectorRadius,
+                length=connectorLength,
+                thickness=connectorThickness,
+                connectorDistanceBelowMidline=connectorDistanceBelowMidline,
+            )
+            for i, vertex in enumerate(vertsRightTop):
+                vertsRightTop[i] = (
+                    vertex[0] + fingerBodyWidth / 2,
+                    vertex[1],
+                    vertex[2],
+                )
+            for i, vertex in enumerate(vertsRightBottom):
+                vertsRightBottom[i] = (
+                    vertex[0] + fingerBodyWidth / 2,
+                    vertex[1],
+                    vertex[2],
+                )
+
+            totalVerts.extend(frontVerticesTop)
+            totalVerts.extend(frontVerticesBottom)
+            totalFaces.extend(facesFrontTop)
+            offset = len(totalVerts)
+            backWall = []
+            for vertice in frontVerticesTop:
+                backWall.append((vertice[0], vertice[1], fingerBodyLength / 2))
+            for vertice in frontVerticesBottom:
+                backWall.append((vertice[0], vertice[1], fingerBodyLength / 2))
+            totalVerts.extend(backWall)
+
+            # BACK FACE
+            for face in facesFrontTop:
+                totalFaces.append(
+                    (3, face[1] + offset, face[2] + offset, face[3] + offset)
+                )
+
+            offset = len(totalVerts) - len(frontVerticesBottom)
+            for idx in range(len(frontVerticesBottom) - 1):
+                totalFaces.append((3, idx + offset, idx + 1 + offset, offset))
+            totalFaces.append(
+                (
+                    3,
+                    len(totalVerts) - len(backWall),
+                    len(totalVerts) - len(backWall) + resolution - 1,
+                    offset,
+                )
+            )
+            totalFaces.append(
+                (
+                    3,
+                    offset,
+                    len(totalVerts) - 1,
+                    len(totalVerts) - len(backWall) + resolution - 1,
+                )
+            )
+
+            offset = len(frontVerticesBottom) + len(frontVerticesTop)
+            for idx in range(len(frontVerticesTop) - 1):
+                totalFaces.append((3, idx, idx + 1, idx + offset))
+                totalFaces.append((3, idx + offset, idx + offset + 1, idx + 1))
+
+            offset = resolution
+            otherSide = len(frontVerticesBottom) + len(frontVerticesTop)
+            for idx in range(len(frontVerticesTop) - resolution):
+                totalFaces.append(
+                    (
+                        3,
+                        idx + offset,
+                        (idx + 1) % resolution + offset,
+                        idx + offset + otherSide,
+                    )
+                )
+                totalFaces.append(
+                    (
+                        3,
+                        idx + otherSide + offset,
+                        (idx + 1) % resolution + otherSide + offset,
+                        (idx + 1) % resolution + offset,
+                    )
+                )
+
+            offset = len(frontVerticesTop)
+            for idx in range(0, len(frontVerticesBottom) - 1):
+                totalFaces.append(
+                    (
+                        3,
+                        idx + offset,
+                        idx + 1 + offset,
+                        len(frontVerticesBottom) - 1 + offset,
+                    )
+                )
+            offset1 = len(frontVerticesTop)
+            offset2 = 2 * len(frontVerticesTop) + len(frontVerticesBottom)
+            for idx in range(0, len(frontVerticesBottom) - 1):
+                totalFaces.append((3, idx + offset1, idx + 1 + offset1, idx + offset2))
+                totalFaces.append(
+                    (3, idx + offset2, idx + offset2 + 1, idx + 1 + offset1)
+                )
+
+            offset = len(totalVerts)
+
+            totalVerts.extend(vertsLeftTop)
+            totalVerts.extend(vertsLeftBottom)
+
+            totalVerts.extend(vertsRightTop)
+            totalVerts.extend(vertsRightBottom)
+
+            totalFaces.append(
+                (
+                    3,
+                    0,
+                    offset + len(vertsLeftTop) + len(vertsLeftBottom),
+                    resolution - 1,
+                )
+            )
+            totalFaces.append(
+                (
+                    3,
+                    resolution - 1,
+                    offset,
+                    offset + len(vertsLeftTop) + len(vertsLeftBottom),
+                )
+            )
+
+            totalFaces.append(
+                (
+                    3,
+                    len(frontVerticesTop),
+                    offset + 2 * len(vertsLeftTop) + 2 * len(vertsLeftBottom) - 1,
+                    len(frontVerticesTop) + len(frontVerticesBottom) - 1,
+                )
+            )
+            totalFaces.append(
+                (
+                    3,
+                    offset + len(vertsLeftTop) + len(vertsLeftBottom) - 1,
+                    offset + 2 * len(vertsLeftTop) + 2 * len(vertsLeftBottom) - 1,
+                    len(frontVerticesTop) + len(frontVerticesBottom) - 1,
+                )
+            )
+
+            for idx in range(len(vertsLeftTop) + len(vertsLeftBottom) - 1):
+                totalFaces.append(
+                    (
+                        3,
+                        idx + offset,
+                        idx + 1 + offset,
+                        idx + offset + len(vertsLeftTop) + len(vertsLeftBottom) + 1,
+                    )
+                )
+                totalFaces.append(
+                    (
+                        3,
+                        idx + offset,
+                        idx + offset + len(vertsLeftTop) + len(vertsLeftBottom),
+                        idx + offset + len(vertsLeftTop) + len(vertsLeftBottom) + 1,
+                    )
+                )
+
+            # SIDEWALLS
+            otherSide = len(vertsLeftTop) + len(vertsLeftBottom)
+            for idx in range(1, int(len(vertsLeftTop) / 2) + 1):
+                totalFaces.append((3, offset + idx - 1, resolution - 1, offset + idx))
+                totalFaces.append(
+                    (3, offset + idx - 1 + otherSide, 0, offset + idx + otherSide)
+                )
+            totalFaces.append(
+                (
+                    3,
+                    resolution - 1,
+                    offset + int(len(vertsLeftTop) / 2),
+                    len(frontVerticesTop) + len(frontVerticesBottom) + resolution - 1,
+                )
+            )
+            totalFaces.append(
+                (
+                    3,
+                    0,
+                    offset + int(len(vertsLeftTop) / 2) + otherSide,
+                    len(frontVerticesTop) + len(frontVerticesBottom),
+                )
+            )
+            for idx in range(int(len(vertsLeftTop) / 2) + 1, len(vertsLeftTop)):
+                totalFaces.append(
+                    (
+                        3,
+                        offset + idx - 1,
+                        len(frontVerticesTop)
+                        + len(frontVerticesBottom)
+                        + resolution
+                        - 1,
+                        offset + idx,
+                    )
+                )
+                totalFaces.append(
+                    (
+                        3,
+                        offset + idx - 1 + otherSide,
+                        len(frontVerticesTop) + len(frontVerticesBottom),
+                        offset + idx + otherSide,
+                    )
+                )
+            totalFaces.append(
+                (
+                    3,
+                    len(frontVerticesTop) + len(frontVerticesBottom) + resolution - 1,
+                    offset + len(vertsLeftTop) - 1,
+                    2 * len(frontVerticesTop) + 2 * len(frontVerticesBottom) - 1,
+                )
+            )
+            totalFaces.append(
+                (
+                    3,
+                    len(frontVerticesTop) + len(frontVerticesBottom),
+                    offset + len(vertsLeftTop) - 1 + otherSide,
+                    2 * len(frontVerticesTop) + len(frontVerticesBottom),
+                )
+            )
+
+            # #BOTTOM HALF
+            for idx in range(
+                len(vertsLeftTop), len(vertsLeftTop) + int(len(vertsLeftBottom) / 2)
+            ):
+                totalFaces.append(
+                    (
+                        3,
+                        offset + idx - 1,
+                        2 * len(frontVerticesTop) + 2 * len(frontVerticesBottom) - 1,
+                        offset + idx,
+                    )
+                )
+                totalFaces.append(
+                    (
+                        3,
+                        offset + idx - 1 + otherSide,
+                        2 * len(frontVerticesTop) + len(frontVerticesBottom),
+                        offset + idx + otherSide,
+                    )
+                )
+            totalFaces.append(
+                (
+                    3,
+                    2 * len(frontVerticesTop) + 2 * len(frontVerticesBottom) - 1,
+                    offset + len(vertsLeftTop) + int(len(vertsLeftBottom) / 2) - 1,
+                    len(frontVerticesTop) + len(frontVerticesBottom) - 1,
+                )
+            )
+            totalFaces.append(
+                (
+                    3,
+                    2 * len(frontVerticesTop) + len(frontVerticesBottom),
+                    offset
+                    + len(vertsLeftTop)
+                    + int(len(vertsLeftBottom) / 2)
+                    - 1
+                    + otherSide,
+                    len(frontVerticesTop),
+                )
+            )
+            for idx in range(
+                len(vertsLeftTop) + int(len(vertsLeftBottom) / 2),
+                len(vertsLeftTop) + len(vertsLeftBottom),
+            ):
+                totalFaces.append(
+                    (
+                        3,
+                        offset + idx - 1,
+                        len(frontVerticesTop) + len(frontVerticesBottom) - 1,
+                        offset + idx,
+                    )
+                )
+                totalFaces.append(
+                    (
+                        3,
+                        offset + idx - 1 + otherSide,
+                        len(frontVerticesTop),
+                        offset + idx + otherSide,
+                    )
+                )
+            for idx, point in enumerate(totalVerts):
+                totalVerts[idx] = np.array(point) - np.array(
+                    [0, 0, fingerBodyLength / 2]
+                )
+            mesh = pv.PolyData(totalVerts, totalFaces).clean().triangulate()
+            return mesh
+
+        half1 = (
+            genBase(
+                resolution=resolution,
+                topRadii=topRadii,
+                bottomRadii=bottomRadii,
+                fingerBodyHeight=fingerBodyHeight,
+                fingerBodyWidth=fingerBodyWidth,
+                stringHoleRadius=stringHoleRadius,
+                fingerBodyLength=fingerBodyLength,
+                connectorRadius=connectorRadius,
+                connectorLength=connectorLength,
+                connectorThickness=connectorThickness,
+                connectorDistanceBelowMidline=connectorDistanceBelowMidline,
+            )
+            .triangulate()
+            .compute_normals(
+                non_manifold_traversal=False,
+                consistent_normals=True,
+                auto_orient_normals=True,
+            )
+        )
+        half2 = (
+            genFingerTipPart(
+                resolution=resolution,
+                topRadii=topRadii,
+                bottomRadii=bottomRadii,
+                fingerBodyHeight=fingerBodyHeight,
+                fingerBodyWidth=fingerBodyWidth,
+                fingerBodyLength=fingerBodyLength,
+            )
+            .triangulate()
+            .compute_normals()
+        )
+
+        boolean = vtkPolyDataBooleanFilter()
+        boolean.SetInputData(0, half1)
+        boolean.SetInputData(1, half2)
+        boolean.SetOperModeToUnion()
+        boolean.Update()
+
+        merged = (
+            pv.wrap(boolean.GetOutput())
+            .triangulate()
+            .subdivide(nsub=3)
+            .compute_normals(
+                non_manifold_traversal=False,
+                consistent_normals=True,
+                auto_orient_normals=True,
+            )
+            .clean()
+        )
+        stringHole = (
+            stringHoleFingerTip(
+                res=10, radius=stringHoleRadius, height=fingerBodyLength
+            )
+            .subdivide(nsub=2)
+            .compute_normals(
+                non_manifold_traversal=False,
+                consistent_normals=True,
+                auto_orient_normals=True,
+            )
+        )
+        stringHole = self.moveAlignMesh(
+            stringHole, (0, stringLoc, 0), (0, 0, 1), (0, -1, 0)
+        )
+        boolean = vtkPolyDataBooleanFilter()
+        boolean.SetInputData(0, merged)
+        boolean.SetInputData(1, stringHole)
+        boolean.SetOperModeToDifference()
+        boolean.Update()
+        finalFingerTip = (
+            pv.wrap(boolean.GetOutput())
+            .triangulate()
+            .compute_normals(
+                non_manifold_traversal=False,
+                consistent_normals=True,
+                auto_orient_normals=True,
+            )
+            .clean()
+            .compute_normals(
+                non_manifold_traversal=False,
+                consistent_normals=True,
+                auto_orient_normals=True,
+            )
+        )
+        print(
+            f"1: {half1.is_manifold} 2: {half2.is_manifold} merged: {merged.is_manifold} final: {finalFingerTip.is_manifold}"
+        )
+        return finalFingerTip
+
+    def generateFingerPartWithConnectorCut(
+        self,
+        resolution,
+        topRadii,
+        bottomRadii,
+        fingerBodyHeight,
+        fingerBodyWidth,
+        stringHoleRadius,
+        fingerBodyLength,
+        connectorRadius,
+        connectorLength,
+        connectorThickness,
+        connectorDistanceBelowMidline,
+        stringLoc,
+        createBackFace,
+    ):
 
         def endFaceTop(
             resolution,
@@ -589,14 +1467,18 @@ class HandManipulator:
             newPoints = []
             faces = []
             thetaInterval = np.pi / (resolution)
-            newPoints.append((0, 0, 0))
-            offset = len(newPoints)
+            # newPoints.append((0,0,0))
+            # offset = len(newPoints)
+            offset = 0
             for i in range(2):
                 batch = []
                 theta = 0
-                while theta < np.pi / 2:
+                while theta < np.pi / 2 and len(batch) < resolution / 2:
                     radius = fingerBodyWidth / 2 / np.cos(theta)
-                    while radius * np.sin(theta) < fingerBodyHeight / 2 - topRadii:
+                    while (
+                        radius * np.sin(theta) < fingerBodyHeight / 2 - topRadii
+                        and len(batch) < resolution / 2
+                    ):
                         batch.append(
                             (
                                 radius * np.cos(theta) * ((-1) ** i),
@@ -606,7 +1488,10 @@ class HandManipulator:
                         )
                         theta += thetaInterval
                         radius = fingerBodyWidth / 2 / np.cos(theta)
-                    while radius * np.sin(theta) < fingerBodyHeight / 2:
+                    while (
+                        radius * np.sin(theta) < fingerBodyHeight / 2
+                        and len(batch) < resolution / 2
+                    ):
                         batch.append(
                             (
                                 radius * np.cos(theta) * ((-1) ** i),
@@ -616,7 +1501,7 @@ class HandManipulator:
                         )
                         theta += thetaInterval
                     radius = fingerBodyHeight / 2 / np.sin(theta)
-                    while radius * np.cos(theta) > 0:
+                    while radius * np.cos(theta) > 0 and len(batch) < resolution / 2:
                         batch.append(
                             (
                                 radius * np.cos(theta) * ((-1) ** i),
@@ -628,32 +1513,33 @@ class HandManipulator:
                         radius = fingerBodyHeight / 2 / np.sin(theta)
                 if i % 2 == 1:
                     batch.reverse()
-                    batch.pop(0)
+                # batch.pop(0)
                 newPoints.extend(batch)
-            for i in range(resolution + 1):
+            for i in range(resolution):
                 theta = 2 * np.pi / resolution * i + (3 * np.pi / 2)
                 newPoints.append(
                     (
                         holeRadius * np.cos(theta),
-                        holeRadius * np.sin(theta) + stringLoc,
-                        holeRadius * np.sin(theta) + stringLoc,
+                        holeRadius * np.sin(theta) + fingerBodyHeight / 4,
+                        holeRadius * np.sin(theta) + fingerBodyHeight / 4,
                     )
                 )
-            for i in range(resolution + 1):
+            offset = 0
+            for i in range(resolution):
                 faces.append(
                     (
                         3,
                         i + offset,
-                        (i + 1) % (resolution + 1) + offset,
-                        (i) % (resolution + 1) + resolution + offset + 1,
+                        (i + 1) % (resolution) + offset,
+                        (i) % (resolution) + resolution + offset,
                     )
                 )
                 faces.append(
                     (
                         3,
-                        (i + 1) % (resolution + 1) + offset,
-                        (i + 1) % (resolution + 1) + resolution + offset + 1,
-                        (i) % (resolution + 1) + resolution + offset + 1,
+                        (i) % (resolution) + resolution + offset,
+                        (i + 1) % (resolution) + resolution + offset,
+                        (i + 1) % (resolution) + offset,
                     )
                 )
             return (np.array(newPoints), faces)
@@ -800,51 +1686,104 @@ class HandManipulator:
                 vertex[1],
                 vertex[2],
             )
-        pl = pv.Plotter()
+
         totalVerts.extend(frontVerticesTop)
         totalVerts.extend(frontVerticesBottom)
         totalFaces.extend(facesFrontTop)
+        offset = len(totalVerts)
         backWall = []
         for vertice in frontVerticesTop:
             backWall.append((vertice[0], vertice[1], fingerBodyLength / 2))
         for vertice in frontVerticesBottom:
             backWall.append((vertice[0], vertice[1], fingerBodyLength / 2))
         totalVerts.extend(backWall)
-        offset = len(frontVerticesBottom) + len(frontVerticesTop)
 
-        for idx in range(1, len(frontVerticesTop) - 1):
-            if idx != resolution + 1:
-                totalFaces.append((3, idx, idx + 1, idx + offset))
-                totalFaces.append((3, idx + 1, idx + offset + 1, idx + offset))
+        if createBackFace:
+            for face in facesFrontTop:
+                totalFaces.append(
+                    (3, face[1] + offset, face[2] + offset, face[3] + offset)
+                )
+
+            offset = len(totalVerts) - len(frontVerticesBottom)
+            for idx in range(len(frontVerticesBottom) - 1):
+                totalFaces.append((3, idx + offset, idx + 1 + offset, offset))
+            totalFaces.append(
+                (
+                    3,
+                    len(totalVerts) - len(backWall),
+                    len(totalVerts) - len(backWall) + resolution - 1,
+                    offset,
+                )
+            )
+            totalFaces.append(
+                (
+                    3,
+                    offset,
+                    len(totalVerts) - 1,
+                    len(totalVerts) - len(backWall) + resolution - 1,
+                )
+            )
+
+        offset = len(frontVerticesBottom) + len(frontVerticesTop)
+        for idx in range(len(frontVerticesTop) - resolution - 1):
+            totalFaces.append((3, idx, idx + 1, idx + offset))
+            totalFaces.append((3, idx + offset, idx + offset + 1, idx + 1))
+
+        offset = resolution
+        otherSide = len(frontVerticesBottom) + len(frontVerticesTop)
+        for idx in range(len(frontVerticesTop) - resolution):
+            totalFaces.append(
+                (
+                    3,
+                    idx + offset,
+                    (idx + 1) % resolution + offset,
+                    idx + offset + otherSide,
+                )
+            )
+            totalFaces.append(
+                (
+                    3,
+                    idx + otherSide + offset,
+                    (idx + 1) % resolution + otherSide + offset,
+                    (idx + 1) % resolution + offset,
+                )
+            )
 
         offset = len(frontVerticesTop)
         for idx in range(0, len(frontVerticesBottom) - 1):
             totalFaces.append(
                 (
                     3,
-                    len(frontVerticesBottom) - 1 + offset,
-                    idx + 1 + offset,
                     idx + offset,
+                    idx + 1 + offset,
+                    len(frontVerticesBottom) - 1 + offset,
                 )
             )
         offset1 = len(frontVerticesTop)
         offset2 = 2 * len(frontVerticesTop) + len(frontVerticesBottom)
         for idx in range(0, len(frontVerticesBottom) - 1):
             totalFaces.append((3, idx + offset1, idx + 1 + offset1, idx + offset2))
-            totalFaces.append((3, idx + 1 + offset1, idx + offset2 + 1, idx + offset2))
+            totalFaces.append((3, idx + offset2, idx + offset2 + 1, idx + 1 + offset1))
 
         offset = len(totalVerts)
 
         totalVerts.extend(vertsLeftTop)
         totalVerts.extend(vertsLeftBottom)
+
         totalVerts.extend(vertsRightTop)
         totalVerts.extend(vertsRightBottom)
 
-        totalFaces.append((3, 0, offset + len(vertsLeftTop) + len(vertsLeftBottom), 1))
         totalFaces.append(
-            (3, offset, offset + len(vertsLeftTop) + len(vertsLeftBottom), 0)
+            (3, 0, offset + len(vertsLeftTop) + len(vertsLeftBottom), resolution - 1)
         )
-        totalFaces.append((3, resolution + 1, offset, 0))
+        totalFaces.append(
+            (
+                3,
+                resolution - 1,
+                offset,
+                offset + len(vertsLeftTop) + len(vertsLeftBottom),
+            )
+        )
 
         totalFaces.append(
             (
@@ -884,24 +1823,24 @@ class HandManipulator:
         # SIDEWALLS
         otherSide = len(vertsLeftTop) + len(vertsLeftBottom)
         for idx in range(1, int(len(vertsLeftTop) / 2) + 1):
-            totalFaces.append((3, offset + idx - 1, resolution + 1, offset + idx))
+            totalFaces.append((3, offset + idx - 1, resolution - 1, offset + idx))
             totalFaces.append(
-                (3, offset + idx - 1 + otherSide, 1, offset + idx + otherSide)
+                (3, offset + idx - 1 + otherSide, 0, offset + idx + otherSide)
             )
         totalFaces.append(
             (
                 3,
-                resolution + 1,
+                resolution - 1,
                 offset + int(len(vertsLeftTop) / 2),
-                len(frontVerticesTop) + len(frontVerticesBottom) + resolution + 1,
+                len(frontVerticesTop) + len(frontVerticesBottom) + resolution - 1,
             )
         )
         totalFaces.append(
             (
                 3,
-                1,
+                0,
                 offset + int(len(vertsLeftTop) / 2) + otherSide,
-                len(frontVerticesTop) + len(frontVerticesBottom) + 1,
+                len(frontVerticesTop) + len(frontVerticesBottom),
             )
         )
         for idx in range(int(len(vertsLeftTop) / 2) + 1, len(vertsLeftTop)):
@@ -909,7 +1848,7 @@ class HandManipulator:
                 (
                     3,
                     offset + idx - 1,
-                    len(frontVerticesTop) + len(frontVerticesBottom) + resolution + 1,
+                    len(frontVerticesTop) + len(frontVerticesBottom) + resolution - 1,
                     offset + idx,
                 )
             )
@@ -917,14 +1856,14 @@ class HandManipulator:
                 (
                     3,
                     offset + idx - 1 + otherSide,
-                    len(frontVerticesTop) + len(frontVerticesBottom) + 1,
+                    len(frontVerticesTop) + len(frontVerticesBottom),
                     offset + idx + otherSide,
                 )
             )
         totalFaces.append(
             (
                 3,
-                len(frontVerticesTop) + len(frontVerticesBottom) + resolution + 1,
+                len(frontVerticesTop) + len(frontVerticesBottom) + resolution - 1,
                 offset + len(vertsLeftTop) - 1,
                 2 * len(frontVerticesTop) + 2 * len(frontVerticesBottom) - 1,
             )
@@ -932,12 +1871,13 @@ class HandManipulator:
         totalFaces.append(
             (
                 3,
-                len(frontVerticesTop) + len(frontVerticesBottom) + 1,
+                len(frontVerticesTop) + len(frontVerticesBottom),
                 offset + len(vertsLeftTop) - 1 + otherSide,
                 2 * len(frontVerticesTop) + len(frontVerticesBottom),
             )
         )
-        # BOTTOM HALF
+
+        # #BOTTOM HALF
         for idx in range(
             len(vertsLeftTop), len(vertsLeftTop) + int(len(vertsLeftBottom) / 2)
         ):
@@ -1000,10 +1940,18 @@ class HandManipulator:
         for idx, point in enumerate(totalVerts):
             totalVerts[idx] = np.array(point) - np.array([0, 0, fingerBodyLength / 2])
         mesh = pv.PolyData(totalVerts, totalFaces).clean().triangulate()
+
         half2 = mesh.reflect((0, 0, 1), point=(0, 0, 0))
-        merged = mesh.merge(half2)
-        cleanedMerge = merged.clean().compute_normals()
-        return cleanedMerge
+        merged = (
+            mesh.merge(half2, merge_points=True)
+            .compute_normals(
+                non_manifold_traversal=False,
+                consistent_normals=True,
+                auto_orient_normals=True,
+            )
+            .clean()
+        )
+        return merged
 
     def displayFingerMeshes(self):
         for finger in self.fingerActors:
@@ -1503,6 +2451,81 @@ class HandManipulator:
             totalVertices[i] = (point[0], point[1] - offset, point[2])
         return pv.PolyData(totalVertices, totalFaces).compute_normals()
 
+    def stringHoleFingerTip(self, radius, res, height):
+        totalVerts = []
+        totalFaces = []
+        thetaInterval = 2 * np.pi / res
+        angleVector = height / 2 * np.array([0, -1, 1])
+        for i in range(res):
+            totalVerts.append(
+                (
+                    radius * np.cos(thetaInterval * i),
+                    radius * np.sin(thetaInterval * i),
+                    -height / 2,
+                )
+            )
+        for i in range(res):
+            p = np.matrix((radius * np.sin(thetaInterval * i), 0))
+            rotMat = np.matrix([[2**0.5 / 2, 2**0.5 / 2], [2**0.5 / 2, -(2**0.5) / 2]])
+            p = rotMat * np.transpose(p)
+            finalP = np.array(
+                (radius * np.cos(thetaInterval * i), p.flat[0], p.flat[1])
+            )
+            totalVerts.append(finalP)
+            # totalVerts.append((radius*np.cos(thetaInterval*i), radius*np.sin(thetaInterval*i), height/2+radius*np.sin(thetaInterval*i)))
+        for i in range(res):
+            newPoint = np.array(totalVerts[res + i]) + angleVector
+            totalVerts.append(newPoint)
+        for i in range(res):
+            totalFaces.append((3, i, (i + 1) % res, i + res))
+            totalFaces.append((3, i + res, (i + 1) % res + res, (i + 1) % res))
+
+            totalFaces.append((3, i + res, (i + 1) % res + res, i + res + res))
+            totalFaces.append(
+                (3, i + res + res, (i + 1) % res + res + res, (i + 1) % res + res)
+            )
+
+        totalVerts.append((0, 0, -height / 2))
+        totalVerts.append(np.array((0, 0, 0)) + angleVector)
+        for i in range(res):
+            totalFaces.append((3, i, len(totalVerts) - 2, (i + 1) % res))
+            totalFaces.append(
+                (3, i + 2 * res, len(totalVerts) - 1, (i + 1) % res + 2 * res)
+            )
+        mesh = pv.PolyData(totalVerts, totalFaces)
+        return mesh
+
+    def genCylinder(self, radius, res, height):
+        totalVerts = []
+        totalFaces = []
+        thetaInterval = 2 * np.pi / res
+        for i in range(res):
+            totalVerts.append(
+                (
+                    radius * np.cos(thetaInterval * i),
+                    radius * np.sin(thetaInterval * i),
+                    -height / 2,
+                )
+            )
+        for i in range(res):
+            totalVerts.append(
+                (
+                    radius * np.cos(thetaInterval * i),
+                    radius * np.sin(thetaInterval * i),
+                    height / 2,
+                )
+            )
+        for i in range(res):
+            totalFaces.append((3, i, (i + 1) % res, i + res))
+            totalFaces.append((3, i + res, (i + 1) % res + res, (i + 1) % res))
+        totalVerts.append((0, 0, -height / 2))
+        totalVerts.append((0, 0, height / 2))
+        for i in range(res):
+            totalFaces.append((3, i, len(totalVerts) - 2, (i + 1) % res))
+            totalFaces.append((3, i + res, len(totalVerts) - 1, (i + 1) % res + res))
+        mesh = pv.PolyData(totalVerts, totalFaces)
+        return mesh
+
     def calculateStringTravelForFullActuation(self, fingerIdx, stringLoc):
         return 2 * stringLoc * (len(self.jointsList[fingerIdx]) - 1)
 
@@ -1605,10 +2628,10 @@ class HandManipulator:
             slope = dy / dx
             return float(slope)
 
-        numFingers = 4
+        numFingers = 6
         widthOfLost = 5.1
         slotLength = 24
-        distanceBetweenSlots = 6
+        distanceBetweenSlots = 4
         neededCircumference = numFingers * widthOfLost + distanceBetweenSlots * (
             numFingers + 1
         )
@@ -1637,7 +2660,8 @@ class HandManipulator:
             p = np.array(getPointOnEllipse(j))
             radius = p - centerPt
             radius /= np.linalg.norm(radius)
-            p += radius * (socketThickness)
+            # p += radius * (socketThickness)
+            p += radius * (0)
             pt = np.array([p[0], 0, p[1]])
             vertices.append(pt)
         for i in range(0, resolution):
@@ -1756,6 +2780,11 @@ class HandManipulator:
         actor.SetMapper(mapper)
         self.renderer.AddActor(actor)
         self.renderWindow.Render()
+
+        writer = vtk.vtkSTLWriter()
+        writer.SetFileName("toBePrinted/wristBand.stl")
+        writer.SetInputData(vtkTensioner)
+        writer.Write()
 
         # pls = vtk.vtkPoints()
         # for pt in vertices:

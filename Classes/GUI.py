@@ -1,6 +1,7 @@
 from lib import vtk, Qt, QVTKRenderWindowInteractor, QtCore, QtWidgets, np
 from handManipulator import HandManipulator
 from handMesh import HandMesh
+from styles import Styles
 
 
 class NoRotateStyle(vtk.vtkInteractorStyleTrackballCamera):
@@ -80,15 +81,8 @@ class GUI(Qt.QMainWindow):
         Qt.QMainWindow.__init__(self, parent)
 
         app = Qt.QApplication.instance()
-        app.setStyleSheet(
-            "QLabel { font-size: 14px; } "
-            "QPushButton {"
-            "border-radius: 10px; "
-            "border: 1px solid #339955;"
-            "width: 200px;"
-            "height: 50px;"
-            "}"
-        )
+        styleSheet = Styles()
+        app.setStyleSheet(styleSheet.getStyles())
 
         mainLayout = Qt.QHBoxLayout()
         self.vtkWidget = QVTKRenderWindowInteractor(self)
@@ -150,6 +144,7 @@ class GUI(Qt.QMainWindow):
         tabs = Qt.QTabWidget()
         tabs.addTab(self.fingerTabUI(), "Finger Generator")
         tabs.addTab(self.socketTabUI(), "Socket Generator")
+        tabs.setFixedWidth(600)
         mainLayout.addWidget(tabs)
 
     def socketTabUI(self):
@@ -260,7 +255,7 @@ class GUI(Qt.QMainWindow):
             box.addWidget(label)
             h_layout = Qt.QHBoxLayout()
             box.addLayout(h_layout)
-            slider = QtWidgets.QSlider()
+            slider = QtWidgets.QSlider(objectName="fingerSelectorSlider")
             slider.setOrientation(QtCore.Qt.Vertical)
             slider.setMinimum(1)
             slider.setMaximum(4)
@@ -273,11 +268,11 @@ class GUI(Qt.QMainWindow):
             self.sliders.append(slider)
             h_layout.addWidget(slider)
 
-            frame = Qt.QFrame()
+            frame = Qt.QFrame(objectName="fingerJointSelector")
             frame.setFrameShape(Qt.QFrame.StyledPanel)
-            frame.setStyleSheet(
-                f"background-color: rgb(200, {200+i*10}, 200); border-radius: 10px; "
-            )
+            # frame.setStyleSheet(
+            #     f"background-color: rgb(200, {200+i*10}, 200); border-radius: 10px; "
+            # )
             frame.setLayout(box)
             fingerSubBoxes.addWidget(frame)
         fingerActivationBox.addLayout(fingerSubBoxes)
@@ -381,7 +376,7 @@ class GUI(Qt.QMainWindow):
         scroll2 = Qt.QScrollArea()
         scroll2.setWidget(tab)
         scroll2.setWidgetResizable(True)
-        scroll2.setFixedHeight(800)
+        scroll2.setFixedHeight(950)
 
         return scroll2
 

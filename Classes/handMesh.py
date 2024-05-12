@@ -393,13 +393,13 @@ class HandMesh:
 
             self.finalSocketHard = socketShell
             writer = vtk.vtkPolyDataWriter()
-            writer.SetFileName("oldDesigns/4thGenHard.vtk")
+            writer.SetFileName("oldDesigns/5thGenHard.vtk")
             writer.SetInputData(self.finalSocketHard)
             writer.Write()
 
             self.finalSocket = self.extrusion(duplicateSocketShell)
             writer = vtk.vtkPolyDataWriter()
-            writer.SetFileName("oldDesigns/4thGenSoft.vtk")
+            writer.SetFileName("oldDesigns/5thGenSoft.vtk")
             writer.SetInputData(self.finalSocket)
             writer.Write()
 
@@ -986,7 +986,7 @@ class HandMesh:
         resolutionEnd = 12
 
         connector = self.createFullConnector(
-            width=connectorWidth + 5,
+            width=connectorWidth + 1,
             endRadius=connectorRadius,
             length=connectorLength,
             thickness=connectorThickness,
@@ -1292,6 +1292,8 @@ class HandMesh:
             size=5,
         ):
             threshold = 5e-1
+            selectionSphereRadius = radius + 1
+            projectedCircleRadius = radius
             start = time.time()
             direction = carpal["center"] - carpal["normal"]
             direction /= np.linalg.norm(direction)
@@ -1300,7 +1302,7 @@ class HandMesh:
                 -1 * rayLength * direction,
                 first_point=True,
             )
-            selectingSphere = pv.Sphere(radius=radius, center=point)
+            selectingSphere = pv.Sphere(radius=selectionSphereRadius, center=point)
             selectedIds = socket.select_enclosed_points(selectingSphere)[
                 "SelectedPoints"
             ].view(bool)
@@ -1314,7 +1316,11 @@ class HandMesh:
                     angle = np.arccos(
                         np.dot(u, v) / (np.linalg.norm(u) * np.linalg.norm(v))
                     )
-                    if angle < threshold:
+                    if (
+                        angle < threshold
+                        and findDistanceP(point, carpal["normal"], carpal["center"])
+                        <= projectedCircleRadius
+                    ):
                         extractedPointIdx.append(idx)
             pointsToPlot = socket.extract_points(
                 selectedIds, adjacent_cells=False, include_cells=True
@@ -1507,8 +1513,42 @@ class HandMesh:
                 radius=fingerInfo["connectorWidth"] / 2 + 1,
                 height=6,
             ).triangulate()
-
             conjoiningMeshes.append(wedge)
+
+            if True:
+
+                ring = pv.ParametricTorus(ringradius=2.25, crosssectionradius=0.8)
+
+                angledVector = carpal["normal"] / np.linalg.norm(
+                    carpal["normal"]
+                ) - crossedBiNormal / np.linalg.norm(crossedBiNormal)
+                angledVector = -1 * angledVector / np.linalg.norm(angledVector)
+                newNormal = np.cross(
+                    carpal["normal"] / np.linalg.norm(carpal["normal"]),
+                    crossedBiNormal / np.linalg.norm(crossedBiNormal),
+                )
+                # elasticHolder = (
+                #     pv.read("stlfiles/elasticHolder.stl")
+                #     .clean()
+                #     .triangulate()
+                #     .compute_normals(
+                #         non_manifold_traversal=False,
+                #         consistent_normals=True,
+                #         auto_orient_normals=True,
+                #     )
+                # )
+                location = (
+                    connectorPieceLocation
+                    + (3 * initRadius / 4)
+                    * crossedBiNormal
+                    / np.linalg.norm(crossedBiNormal)
+                    - 3 * carpal["normal"] / np.linalg.norm(carpal["normal"])
+                )
+
+                elasticHolder = self.moveAlignMesh(
+                    ring, location, angledVector, newNormal
+                )
+                conjoiningMeshes.append(elasticHolder)
 
         for pointToMove, newPointPosition in newProportionalPositions.items():
             socket.points[pointToMove] = newPointPosition
@@ -1524,6 +1564,7 @@ class HandMesh:
             boolean.SetOperModeToDifference()
             boolean.Update()
             socket = pv.wrap(boolean.GetOutput())
+
         cleanedSocket = socket.clean()
 
         file1 = open("strengthAnalysis/connectiveGenerationTime2.txt", "a")
