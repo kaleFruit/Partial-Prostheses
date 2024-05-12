@@ -4,7 +4,16 @@ This software provides a solution to those who 3D-print prosthetics in communiti
 
 ## Description
 
+* Users can toggle and manipulate a pseudo skeleton of joints to define the finger generation
+* Users can "paint" the residual limb where they want to define the socket
+
 ## Getting Started
+
+1. Setting up a new Conda environment through the ternminal with the correct dependencies:1. Create a new conda environment with Python 3.9 using: `conda create -n hapticsHarnessGenerator python=3.9`
+2. Install VTKBool with: `conda install -c conda-forge vtkbool`
+3. Install Pyvista with: `conda install -c conda-forge pyvista`
+4. Install PyQt5 with: `pip install PyQt5`
+5. ...
 
 ### Software Operation
 
@@ -24,6 +33,9 @@ This software provides a solution to those who 3D-print prosthetics in communiti
 - VTK
 - Pyvista
 - Numpy
+- SciPy
+- PyQt5
+- VTKBool
 
 ## Authors
 
