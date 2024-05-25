@@ -936,6 +936,7 @@ class HandMesh(QRunnable):
         )
         finalData = pv.wrap(cleaner.GetOutput())
         if not finalData.is_manifold:
+            print(f"socket manifosfdsld: {finalData.is_manifold}")
             finalData = self.removeNonManifoldPartsOfMesh(finalData)
         print(f"socket manifold: {finalData.is_manifold}")
         polydata = vtk.vtkPolyData()

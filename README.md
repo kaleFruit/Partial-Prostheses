@@ -10,22 +10,29 @@ This software provides a solution to those who 3D-print prosthetics in communiti
 ## Current Items in the Works
 
 - Creating a desktop executable
-- Adding file uploads to the GUI
+- Adding file upload/download to the GUI
 - Creating a better arm/wrist band
 - Changing the socket to a Voronoi pattern
 
 ## Getting Started
 
-1. Setting up a new Conda environment through the ternminal with the correct dependencies:1. Create a new conda environment with Python 3.9 using: `conda create -n hapticsHarnessGenerator python=3.9`
-2. Install VTKBool with: `conda install -c conda-forge vtkbool`
-3. Install Pyvista with: `conda install -c conda-forge pyvista`
-4. Install PyQt5 with: `pip install PyQt5`
-5. ...
+1. Set up the Conda environment:
+   1. Create a new Conda environment with Python 3.9 using: `conda create -n partialProsGen python=3.10`
+   2. After activating the environment, install VTKBool with: `conda install -c conda-forge vtkbool`
+   3. Install Pyvista with: `conda install -c conda-forge pyvista`
+   4. Install Scipy with: `conda install scipy`
+   5. Install PyQt5 with: `pip install PyQt5`
+   6. Install Open3D with: `pip install open3d`
+   7. Install Pandas with: `pip install pandas`
+   8. Install plyfile with: `pip install plyfile`
+   9. Install tqdm with: `pip install tqdm`
+2. After downloading the files off github, run main.py
 
 ### Software Operation
 
-1. Upload a scan of the residual limb as a .ply file While in the "Finger Generator" tab:
-2. 1. Position the pseudo skeleton of joints by clicking and dragging on the joints
+1. Upload a scan of the residual limb as a .ply file
+2. While in the "Finger Generator" tab:
+   1. Position the pseudo skeleton of joints by clicking and dragging on the joints
    2. Disable/enable joints using the sliders for each finger
    3. Click "Generate Fingers" to generate the 3D files for the fingers
 3. Switch to the "Socket Generator" tab:
@@ -42,7 +49,9 @@ This software provides a solution to those who 3D-print prosthetics in communiti
 - SciPy
 - PyQt5
 - VTKBool
+- open3d
+- Pandas
 
 ## Authors
 
-Katherine Robertson | 24robertsonk@sagehillschool.org
+Katherine Robertson
