@@ -1,4 +1,5 @@
-from lib import vtk, pd, np, time, pv, integrate, vtkPolyDataBooleanFilter
+from lib import vtk, pd, np, time, pv, integrate, vtkPolyDataBooleanFilter, QRunnable
+from Progress import Progress
 
 
 class cylinderBone:
@@ -116,8 +117,9 @@ class sphereBone:
         return [actor, sphereStartSource]
 
 
-class HandManipulator:
+class HandManipulator(QRunnable):
     def __init__(self, renderWinIn, ren, renWin, handMesh):
+        super().__init__()
         self.renderWindowInteractor = renderWinIn
         self.renderer = ren
         self.renderWindow = renWin
@@ -150,6 +152,14 @@ class HandManipulator:
         self.elastic = True
         self.elasticHoleRadius = 0.75
 
+        # progress bar stuff
+        self.signals = Progress()
+        self.currPart = 0
+        self.totalParts = {"generateFingers": 0}
+        self.process = ""
+        self._is_running = True
+        self._is_finished = False
+
     @property
     def jointsList(self):
         return [
@@ -158,6 +168,21 @@ class HandManipulator:
             self.thirdJoints,
             self.fourthJoints,
         ]
+
+    def run(self):
+        self._is_running = True
+        self._is_finished = False
+        if self.process == "generateFingers":
+            self.generateFingers()
+            self._is_finished = True
+            self.signals.finished.emit()
+
+    def stop(self):
+        self._is_running = False
+
+    def reset(self):
+        self._is_running = True
+        self._is_finished = False
 
     def enableJoints(self, fingerIndex, jointIndex):
         for index in range(jointIndex, len(self.jointsList[fingerIndex])):
@@ -448,6 +473,12 @@ class HandManipulator:
         self.clearOldFingers()
         stringHoleRadius = 1
         fingerColor = (0.8, 0.8, 0.8)
+        self.totalParts["generateFingers"] = 0
+        self.currPart = 1
+        for jointListIdx in range(len(self.jointsList)):
+            self.totalParts["generateFingers"] += (
+                2 * len(self.jointsList[jointListIdx]) - 1
+            )
 
         for jointListIdx in range(len(self.jointsList)):
             stringLoc, self.tensionerHeightAboveWrist = self.findCorrectActuation(
@@ -471,6 +502,10 @@ class HandManipulator:
             if jointListIdx == len(self.jointsList) - 1:
                 normal *= -1
             for jointIdx in range(1, len(self.jointsList[jointListIdx])):
+                self.currPart += 1
+                self.signals.progress.emit(
+                    int(self.currPart / self.totalParts["generateFingers"] * 100)
+                )
                 if (
                     list(jointList.keys())[jointIdx].toggled
                     and list(jointList.keys())[jointIdx - 1].toggled
@@ -555,6 +590,10 @@ class HandManipulator:
 
             tempMeshList = []
             for jointIdx in range(1, len(self.jointsList[jointListIdx])):
+                self.currPart += 1
+                self.signals.progress.emit(
+                    int(self.currPart / self.totalParts["generateFingers"] * 100)
+                )
                 if (
                     list(jointList.keys())[jointIdx].toggled
                     and list(jointList.keys())[jointIdx - 1].toggled
@@ -591,11 +630,16 @@ class HandManipulator:
 
     def genElastic(self, mesh, elasticHoleRadius, fingerLength, fingerHeight):
         hole = (
-            self.genCylinder(elasticHoleRadius, 10, fingerLength+3)
+            self.genCylinder(elasticHoleRadius, 10, fingerLength + 3)
             .compute_normals()
             .subdivide(nsub=3)
         )
-        hole = self.moveAlignMesh(hole, (0, -fingerHeight/2 + elasticHoleRadius+0.75,0), (0, 0, 1), (0, 1, 0))
+        hole = self.moveAlignMesh(
+            hole,
+            (0, -fingerHeight / 2 + elasticHoleRadius + 0.75, 0),
+            (0, 0, 1),
+            (0, 1, 0),
+        )
         boolean = vtkPolyDataBooleanFilter()
         boolean.SetInputData(0, mesh)
         boolean.SetInputData(1, hole)
@@ -609,7 +653,8 @@ class HandManipulator:
                 consistent_normals=True,
                 auto_orient_normals=True,
             )
-            .clean().compute_normals(
+            .clean()
+            .compute_normals(
                 non_manifold_traversal=False,
                 consistent_normals=True,
                 auto_orient_normals=True,
@@ -1960,7 +2005,6 @@ class HandManipulator:
         for finger in self.fingerConnectorActors:
             for connector in finger:
                 self.renderer.AddActor(connector)
-        self.renderWindow.Render()
 
     def generateFingerPart(
         self,
@@ -2611,6 +2655,8 @@ class HandManipulator:
         )
         self.wristMinorRadius = b
         slotThickness = self.tensionerHeightAboveWrist - socketThickness
+        # ADSKLFJADSKLF
+        slotThickness = 4.3
         phi = 0.5 * np.arctan2(-B, C - A)
 
         def getPointOnEllipse(theta):
@@ -2681,14 +2727,14 @@ class HandManipulator:
         for i in range(0, resolution):
             j = theta * 2 / resolution * i - theta - np.pi / 2
             p = getPointOnEllipse(j)
-            vertices.append(np.array([p[0], slotLength, p[1]]))
+            vertices.append(np.array([p[0], slotLength + 8, p[1]]))
         for i in range(0, resolution):
             j = theta * 2 / resolution * i - theta - np.pi / 2
             p = np.array(getPointOnEllipse(j))
             radius = p - centerPt
             radius /= np.linalg.norm(radius)
             p += radius * slotThickness
-            pt = np.array([p[0], slotLength, p[1]])
+            pt = np.array([p[0], slotLength + 8, p[1]])
             vertices.append(pt)
         bottomOffset = resolution * 2
         for i in range(resolution - 1):
@@ -2748,11 +2794,11 @@ class HandManipulator:
             auto_orient_normals=True,
         )
         thetaInterval = (theta * 2) / (numFingers + 1)
-
+        slots = []
         for i in range(numFingers):
             slot = self.tensionerSlot()
             p = getPointOnEllipse(thetaInterval * (i + 1) - np.pi / 2 - theta)
-            p += p / np.linalg.norm(p) * socketThickness
+            p += p / np.linalg.norm(p) * (socketThickness + 1)
             point = np.array([p[0], slotLength / 2, p[1]])
             centerPoint = np.array([h[0], slotLength / 2, k[0]])
             faceNormal = np.array(
@@ -2764,13 +2810,31 @@ class HandManipulator:
             )
             faceNormal /= np.linalg.norm(faceNormal)
             slot = self.moveAlignMesh(slot, point, faceNormal, vector)
+
             boolean = vtkPolyDataBooleanFilter()
             boolean.SetInputData(0, tensioner)
             boolean.SetInputData(1, slot)
             boolean.SetOperModeToDifference()
             boolean.Update()
             tensioner = pv.wrap(boolean.GetOutput()).clean()
-            print(tensioner.is_manifold)
+
+            for i, point in enumerate(slot.points):
+                slot.points[i] = np.array(point) - vector * slotLength / 2
+            slots.append(slot)
+
+        # change this later
+        for i, point in enumerate(tensioner.points):
+            tensioner.points[i] = np.array(point) - vector * slotLength / 2
+
+        planeSource = vtk.vtkPlaneSource()
+        planeSource.SetCenter((0, 0, 0))
+        planeSource.SetNormal(0, 1, 0)
+        size = 25
+        y = self.rootSphere.center[1] + slotLength / 2
+        planeSource.SetOrigin(-size, y, -size)
+        planeSource.SetPoint1(size, y, -size)
+        planeSource.SetPoint2(-size, y, size)
+        planeSource.Update()
 
         vtkTensioner = tensioner.extract_geometry()
         mapper = vtk.vtkPolyDataMapper()
@@ -2779,26 +2843,12 @@ class HandManipulator:
         actor.GetProperty().SetColor(0.7, 0.7, 1)
         actor.SetMapper(mapper)
         self.renderer.AddActor(actor)
-        self.renderWindow.Render()
-
         writer = vtk.vtkSTLWriter()
         writer.SetFileName("toBePrinted/wristBand.stl")
         writer.SetInputData(vtkTensioner)
         writer.Write()
 
-        # pls = vtk.vtkPoints()
-        # for pt in vertices:
-        #     pls.InsertNextPoint(pt)
-        # fd = vtk.vtkPolyData()
-        # fd.SetPoints(pls)
-        # self.plotPointCloud(fd, color=(0.5, 0.2, 1))
-        # self.renderWindow.Render()
-
-        # p = pv.Plotter()
-        # p.add_mesh(self.handMesh)
-        # p.add_mesh(plane)
-        # p.add_mesh(intersection, color="r", line_width=20)
-        # p.show()
+        return (tensioner, slots, planeSource)
 
     def tensionerSlot(self):
         return (
@@ -2811,17 +2861,3 @@ class HandManipulator:
                 auto_orient_normals=True,
             )
         )
-
-    def plotPointCloud(self, polydata, color=(1, 1, 1), size=5):
-        glyph_filter = vtk.vtkVertexGlyphFilter()
-        glyph_filter.SetInputData(polydata)
-        glyph_filter.Update()
-        mapper = vtk.vtkPolyDataMapper()
-        mapper.SetInputConnection(glyph_filter.GetOutputPort())
-        actor = vtk.vtkActor()
-        actor.SetMapper(mapper)
-        actor.GetProperty().SetPointSize(size)
-        self.renderer.AddActor(actor)
-        r, g, b = color
-        actor.GetProperty().SetColor(r, g, b)
-        self.renderWindow.Render()

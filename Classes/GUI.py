@@ -1,7 +1,8 @@
-from lib import vtk, Qt, QVTKRenderWindowInteractor, QtCore, QtWidgets, np
+from lib import vtk, Qt, QVTKRenderWindowInteractor, QtCore, QtWidgets, np, QThreadPool
 from handManipulator import HandManipulator
 from handMesh import HandMesh
 from styles import Styles
+from Progress import WorkerWrapper
 
 
 class NoRotateStyle(vtk.vtkInteractorStyleTrackballCamera):
@@ -85,14 +86,18 @@ class GUI(Qt.QMainWindow):
         app.setStyleSheet(styleSheet.getStyles())
 
         mainLayout = Qt.QHBoxLayout()
-        self.vtkWidget = QVTKRenderWindowInteractor(self)
+        meshBox = Qt.QVBoxLayout()
+        self.pbar = QtWidgets.QProgressBar(self)
+        self.meshVis = QVTKRenderWindowInteractor(self)
         self.renderer = vtk.vtkRenderer()
-        self.vtkWidget.GetRenderWindow().AddRenderer(self.renderer)
-        self.renderWindowInteractor = self.vtkWidget.GetRenderWindow().GetInteractor()
+        self.meshVis.GetRenderWindow().AddRenderer(self.renderer)
+        self.renderWindowInteractor = self.meshVis.GetRenderWindow().GetInteractor()
         noRotateStyle = NoRotateStyle()
         self.renderWindowInteractor.SetInteractorStyle(noRotateStyle)
         self.renderer.ResetCamera()
-        mainLayout.addWidget(self.vtkWidget)
+        meshBox.addWidget(self.pbar)
+        meshBox.addWidget(self.meshVis)
+        mainLayout.addLayout(meshBox)
 
         self.renderWindowInteractor.AddObserver("LeftButtonPressEvent", self.on_click)
         self.renderWindowInteractor.AddObserver("MouseMoveEvent", self.on_drag)
@@ -101,26 +106,37 @@ class GUI(Qt.QMainWindow):
         )
 
         self.handMesh = HandMesh(
-            self.renderWindowInteractor, self.renderer, self.vtkWidget.GetRenderWindow()
+            self.renderWindowInteractor, self.renderer, self.meshVis.GetRenderWindow()
         )
+        self.handMesh.signals.progress.connect(self.updateProgressBar)
+        self.handMesh.signals.finished.connect(self.task_finished)
+        self.threadpool = QThreadPool()
 
         self.handManipulator = HandManipulator(
             self.renderWindowInteractor,
             self.renderer,
-            self.vtkWidget.GetRenderWindow(),
+            self.meshVis.GetRenderWindow(),
             self.handMesh.getHandMesh(),
         )
+        self.handManipulator.signals.progress.connect(self.updateProgressBar)
+        self.handManipulator.signals.finished.connect(self.task_finished)
 
         self.socketMode = False
 
         self.initUI(mainLayout)
 
-        centralWidget = Qt.QWidget()
+        centralWidget = Qt.QWidget(objectName="totalBackground")
         centralWidget.setLayout(mainLayout)
         self.setCentralWidget(centralWidget)
 
-        self.renderWindowInteractor.Initialize()
+        self.wristPlane = None
+
         self.show()
+        self.renderWindowInteractor.Initialize()
+
+    def closeEvent(self, event):
+        self.meshVis.Finalize()
+        super().closeEvent(event)
 
     def on_click(self, obj, event):
         if self.socketMode:
@@ -391,13 +407,28 @@ class GUI(Qt.QMainWindow):
         self.handMesh.setTool(state)
 
     def generateSocket(self):
-        self.handMesh.generateSocket()
+        self.handMesh.process = "generateSocket"
+        self.handMesh.processArgs = [self.wristPlane]
+        if not self.handMesh._is_finished:
+            self.handMesh.stop()
+            self.threadpool.waitForDone()
+        self.handMesh.reset()
+        new_worker = WorkerWrapper(self.handMesh)
+        self.threadpool.start(new_worker)
 
     def genFingers(self):
-        self.handManipulator.generateFingers()
+        self.handManipulator.process = "generateFingers"
+        if not self.handManipulator._is_finished:
+            self.handManipulator.stop()
+            self.threadpool.waitForDone()
+        self.handManipulator.reset()
+        new_worker = WorkerWrapper(self.handManipulator)
+        self.threadpool.start(new_worker)
 
     def tensionerPlate(self):
-        self.handManipulator.createWristBand(self.handMesh.getSocketThickness())
+        self.handMesh.wristBand, self.handMesh.slots, self.wristPlane = (
+            self.handManipulator.createWristBand(self.handMesh.getSocketThickness())
+        )
 
     def saveFingerPositions(self):
         self.handManipulator.saveFingerPositions()
@@ -443,12 +474,25 @@ class GUI(Qt.QMainWindow):
         writer.SetInputData(self.handMesh.getHand())
         writer.Write()
 
-        self.handMesh.genHardSocket(
+        args = (
             self.handManipulator.getJoints(),
             self.handManipulator.getFingerMeshes(),
             self.handManipulator.getFingerInfo(),
-            s,
         )
+        self.handMesh.process = "genHardSocket"
+        self.handMesh.processArgs = args
+        if not self.handMesh._is_finished:
+            self.handMesh.stop()
+            self.threadpool.waitForDone()
+        self.handMesh.reset()
+        new_worker = WorkerWrapper(self.handMesh)
+        self.threadpool.start(new_worker)
+
+        # self.handMesh.genHardSocket(
+        #     self.handManipulator.getJoints(),
+        #     self.handManipulator.getFingerMeshes(),
+        #     self.handManipulator.getFingerInfo(),
+        # )
 
     def setFingerWidth(self, val):
         self.handManipulator.setFingerWidth(float(val))
@@ -465,3 +509,10 @@ class GUI(Qt.QMainWindow):
     def setWristRotation(self, val):
         if val:
             self.handManipulator.setWristRotation(int(val) / 180 * np.pi)
+
+    def updateProgressBar(self, value):
+        self.pbar.setValue(value)
+        self.pbar.setFormat(f"Generating: {value}%")
+
+    def task_finished(self):
+        self.pbar.setFormat(f"Generation Complete")

@@ -11,11 +11,14 @@ from lib import (
     vtkPolyDataBooleanFilter,
     ConvexHull,
     vtkAppendPolyData,
+    QRunnable,
 )
+from Progress import Progress
 
 
-class HandMesh:
+class HandMesh(QRunnable):
     def __init__(self, renderWinIn, ren, renWin):
+        super().__init__()
         self.renderWindowInteractor = renderWinIn
         self.renderer = ren
         self.renderWindow = renWin
@@ -33,9 +36,11 @@ class HandMesh:
         self.socketIds = [0] * self.actor.GetMapper().GetInput().GetNumberOfCells()
         self.holesInCells = [0] * self.actor.GetMapper().GetInput().GetNumberOfCells()
         self.thickness = 1.5
-        self.elasticString= True
+        self.elasticString = True
+        self.wristBand = None
+        self.slots = []
 
-        self.fromPreviousDesign = True
+        self.fromPreviousDesign = False
         self.initTime = 0
 
         self.finalSocket = None
@@ -43,6 +48,37 @@ class HandMesh:
         self.finalSocketHardActor = None
         self.clipPlaneOriginY = 55
         self.clipPlaneSource = self.createClipPlane()
+
+        # progress bar stuff
+        self.signals = Progress()
+        self.currPart = 0
+        self.totalParts = {"genHardSocket": 33, "generateSocket": 20}
+        self.processArgs = []
+        self.process = ""
+
+        self._is_running = True
+        self._is_finished = False
+
+    def run(self):
+        self._is_running = True
+        self._is_finished = False
+        if self.process == "genHardSocket":
+            self.genHardSocket(
+                self.processArgs[0], self.processArgs[1], self.processArgs[2]
+            )
+            self._is_finished = True
+            self.signals.finished.emit()
+        elif self.process == "generateSocket":
+            self.generateSocket(self.processArgs[0])
+            self._is_finished = True
+            self.signals.finished.emit()
+
+    def stop(self):
+        self._is_running = False
+
+    def reset(self):
+        self._is_running = True
+        self._is_finished = False
 
     def createClipPlane(self):
         planeSource = vtk.vtkPlaneSource()
@@ -318,18 +354,18 @@ class HandMesh:
 
         self.renderer.AddActor(glyph_actor)
 
-    def generateSocket(self):
+    def generateSocket(self, wristPlane):
         self.initTime = time.time()
 
         socketShell = vtk.vtkPolyData()
         if self.fromPreviousDesign:
             reader = vtk.vtkPolyDataReader()
-            reader.SetFileName("oldDesigns/4thGenSoft.vtk")
+            reader.SetFileName("oldDesigns/5thGenSoft.vtk")
             reader.Update()
             self.finalSocket = reader.GetOutput()
 
             reader = vtk.vtkPolyDataReader()
-            reader.SetFileName("oldDesigns/4thGenHard.vtk")
+            reader.SetFileName("oldDesigns/5thGenHard.vtk")
             reader.Update()
             self.finalSocketHard = reader.GetOutput()
         else:
@@ -394,13 +430,13 @@ class HandMesh:
 
             self.finalSocketHard = socketShell
             writer = vtk.vtkPolyDataWriter()
-            writer.SetFileName("oldDesigns/5thGenHard.vtk")
+            writer.SetFileName("oldDesigns/test.vtk")
             writer.SetInputData(self.finalSocketHard)
             writer.Write()
 
             self.finalSocket = self.extrusion(duplicateSocketShell)
             writer = vtk.vtkPolyDataWriter()
-            writer.SetFileName("oldDesigns/5thGenSoft.vtk")
+            writer.SetFileName("oldDesigns/test.vtk")
             writer.SetInputData(self.finalSocket)
             writer.Write()
 
@@ -411,9 +447,9 @@ class HandMesh:
         actor.GetProperty().SetColor(self.colors.GetColor3d("Red"))
         actor.PickableOff()
         actor.GetProperty().SetOpacity(1)
-        # actor.GetProperty().SetRepresentationToWireframe()
         self.renderer.AddActor(actor)
-        self.renderWindow.Render()
+        if self.wristBand:
+            self.wristToSocket(wristPlane)
 
     def samplePoints(self, polydata, radius, bdpts):
         writer = vtk.vtkSTLWriter()
@@ -445,11 +481,7 @@ class HandMesh:
         return pcd, normals, scals
 
     def genHoles(self, pts, nms, scals, polydata):
-        writer = vtk.vtkSTLWriter()
-        writer.SetFileName("temp_input.stl")
-        writer.SetInputData(polydata)
-        writer.Write()
-        mesh = pv.read("temp_input.stl")
+        mesh = pv.wrap(polydata)
         mesh = mesh.triangulate()
         mesh = mesh.smooth(n_iter=16)
         visited = np.zeros(len(pts), dtype=bool)
@@ -459,8 +491,15 @@ class HandMesh:
 
         ogNumPoints = mesh.n_points
         holesCounter = 0
-
+        self.currPart += 1
+        self.signals.progress.emit(
+            int(self.currPart / self.totalParts["generateSocket"] * 100)
+        )
         for idx in tqdm(range(len(pts))):
+            self.currPart += 1
+            self.signals.progress.emit(
+                int(self.currPart / self.totalParts["generateSocket"] * 100)
+            )
             if not visited[idx]:
                 center = pts[idx]
                 normal = nms[idx]
@@ -494,14 +533,14 @@ class HandMesh:
                         pass
                     if idx % 10 == 0:
                         mesh = mesh.decimate(0.1)
-        mesh.save("outputPolydata.stl")
-        reader = vtk.vtkSTLReader()
-        reader.SetFileName("outputPolydata.stl")
-        reader.Update()
+        # mesh.save("outputPolydata.stl")
+        # reader = vtk.vtkSTLReader()
+        # reader.SetFileName("outputPolydata.stl")
+        # reader.Update()
         print(
             f"sampledPoints: {len(pts)} generatedHoles: {holesCounter} initNumVertices: {ogNumPoints} endNumVertices: {mesh.n_points} time: {time.time()-self.initTime}"
         )
-        return reader.GetOutput()
+        return mesh
 
     def extractBoundaryPointIDs(self, source):
         # Setting up the ID filter to generate point IDs
@@ -715,23 +754,32 @@ class HandMesh:
         for idx in [pt for loop in boundaryLoops for pt in loop]:
             point = polydata.GetPoint(idx)
             totalBoundaryPoints.InsertNextPoint(point)
+
         pts, nms, scals = self.samplePoints(
             self.computeCellNormalsFromPointNormals(polydata),
             3,
             vtk_to_numpy(totalBoundaryPoints.GetData()),
         )
-
-        cringypoints = vtk.vtkPoints()
-        for pt in pts:
-            cringypoints.InsertNextPoint(pt)
-        cringe = vtk.vtkPolyData()
-        cringe.SetPoints(cringypoints)
-        self.plotPointCloud(cringe, (0, 1, 1))
+        self.totalParts["generateSocket"] = (
+            len(pts)
+            + polydata.GetNumberOfPoints()
+            + polydata.GetNumberOfCells()
+            + len(boundaryLoops)
+            + 30
+        )
+        self.currPart = 1
+        self.signals.progress.emit(
+            int(self.currPart / self.totalParts["generateSocket"] * 100)
+        )
 
         normals = vtk.vtkFloatArray()
         normals.SetNumberOfComponents(3)
         newPoints = vtk.vtkPoints()
         for i in range(polydata.GetNumberOfPoints()):
+            self.currPart += 1
+            self.signals.progress.emit(
+                int(self.currPart / self.totalParts["generateSocket"] * 100)
+            )
             old_point = polydata.GetPoint(i)
             direction = polydata.GetPointData().GetNormals().GetTuple(i)
             magnitude = (sum([d * d for d in direction])) ** 0.5
@@ -743,7 +791,15 @@ class HandMesh:
         newLayer.SetPoints(newPoints)
         newLayer.GetPointData().SetNormals(normals)
         newCells = vtk.vtkCellArray()
+        self.currPart += 1
+        self.signals.progress.emit(
+            int(self.currPart / self.totalParts["generateSocket"] * 100)
+        )
         for i in range(polydata.GetNumberOfCells()):
+            self.currPart += 1
+            self.signals.progress.emit(
+                int(self.currPart / self.totalParts["generateSocket"] * 100)
+            )
             cell = polydata.GetCell(i)
             adjusted_pointIds = [
                 cell.GetPointId(j) for j in range(cell.GetNumberOfPoints())
@@ -762,7 +818,10 @@ class HandMesh:
         appender.AddInputData(self.computeCellNormalsFromPointNormals(newLayer))
         appender.Update()
         combinedPolyData = appender.GetOutput()
-
+        self.currPart += 1
+        self.signals.progress.emit(
+            int(self.currPart / self.totalParts["generateSocket"] * 100)
+        )
         newCells = vtk.vtkCellArray()
         normals = vtk.vtkFloatArray()
         normals.SetNumberOfComponents(3)
@@ -779,8 +838,15 @@ class HandMesh:
                 .GetNormals()
                 .GetTuple(cellId + polydata.GetNumberOfCells())
             )
-
+        self.currPart += 1
+        self.signals.progress.emit(
+            int(self.currPart / self.totalParts["generateSocket"] * 100)
+        )
         for loop in boundaryLoops:
+            self.currPart += 1
+            self.signals.progress.emit(
+                int(self.currPart / self.totalParts["generateSocket"] * 100)
+            )
             for i in range(len(loop)):
                 currPointID = loop[i]
                 neighborID = loop[(i + 1) % len(loop)]
@@ -830,7 +896,10 @@ class HandMesh:
                     for n in range(3)
                 ]
                 normals.InsertNextTuple([-m for m in self.getNormal(u, v)])
-
+        self.currPart += 1
+        self.signals.progress.emit(
+            int(self.currPart / self.totalParts["generateSocket"] * 100)
+        )
         finalData = vtk.vtkPolyData()
         finalData.SetPoints(combinedPolyData.GetPoints())
         finalData.SetPolys(newCells)
@@ -848,21 +917,35 @@ class HandMesh:
         cleaner.Update()
         finalData = cleaner.GetOutput()
 
-        writer = vtk.vtkSTLWriter()
-        writer.SetFileName("withoutHoles.stl")
-        writer.SetInputData(finalData)
-        writer.Write()
-
         finalData = self.genHoles(pts, nms, scals, finalData)
+
+        self.currPart += 10
+        self.signals.progress.emit(
+            int(self.currPart / self.totalParts["generateSocket"] * 100)
+        )
 
         cleaner = vtk.vtkCleanPolyData()
         cleaner.SetInputData(finalData)
         cleaner.SetTolerance(0.001)
         cleaner.PointMergingOn()
         cleaner.Update()
-        finalData = cleaner.GetOutput()
 
-        return finalData
+        self.currPart += 10
+        self.signals.progress.emit(
+            int(self.currPart / self.totalParts["generateSocket"] * 100)
+        )
+        finalData = pv.wrap(cleaner.GetOutput())
+        if not finalData.is_manifold:
+            finalData = self.removeNonManifoldPartsOfMesh(finalData)
+        print(f"socket manifold: {finalData.is_manifold}")
+        polydata = vtk.vtkPolyData()
+        polydata.DeepCopy(finalData)
+        polydata.Modified()
+        self.currPart += 10
+        self.signals.progress.emit(
+            int(self.currPart / self.totalParts["generateSocket"] * 100)
+        )
+        return polydata
 
     def plotPointCloud(self, polydata, color=(1, 1, 1), size=5):
         glyph_filter = vtk.vtkVertexGlyphFilter()
@@ -996,6 +1079,110 @@ class HandMesh:
 
         return connector
 
+    def wristToSocket(self, wristPlane):
+
+        tempSocket = pv.wrap(self.finalSocket)
+
+        if not tempSocket.is_manifold:
+            tempSocket = self.removeNonManifoldPartsOfMesh(tempSocket).compute_normals(
+                non_manifold_traversal=False,
+                consistent_normals=True,
+                auto_orient_normals=True,
+            )
+
+        cutBox = (
+            pv.Box(bounds=(-100, 100, -100, wristPlane.GetCenter()[1], -100, 100))
+            .triangulate()
+            .compute_normals(
+                non_manifold_traversal=False,
+                consistent_normals=True,
+                auto_orient_normals=True,
+            )
+        )
+
+        print(f"wrist: {cutBox.is_manifold} | socket: {tempSocket.is_manifold}")
+        p = pv.Plotter()
+        p.add_mesh(tempSocket)
+        p.add_mesh(cutBox)
+        p.show()
+
+        boolean = vtkPolyDataBooleanFilter()
+        boolean.SetInputData(0, tempSocket)
+        boolean.SetInputData(1, cutBox)
+        boolean.SetOperModeToDifference()
+        boolean.Update()
+        tempSocket = (
+            pv.wrap(boolean.GetOutput())
+            .triangulate()
+            .clean()
+            .compute_normals(
+                non_manifold_traversal=False,
+                consistent_normals=True,
+                auto_orient_normals=True,
+            )
+        )
+
+        self.wristBand = self.wristBand.compute_normals(
+            non_manifold_traversal=False,
+            consistent_normals=True,
+            auto_orient_normals=True,
+        )
+        p = pv.Plotter()
+        p.add_mesh(tempSocket)
+        p.add_mesh(self.wristBand)
+        p.show()
+        print(f"wrist: {self.wristBand.is_manifold} | socket: {tempSocket.is_manifold}")
+
+        boolean = vtkPolyDataBooleanFilter()
+        boolean.SetInputData(0, tempSocket)
+        boolean.SetInputData(1, self.wristBand)
+        boolean.SetOperModeToUnion()
+        boolean.Update()
+        tempSocket = (
+            pv.wrap(boolean.GetOutput())
+            .triangulate()
+            .clean()
+            .compute_normals(
+                non_manifold_traversal=False,
+                consistent_normals=True,
+                auto_orient_normals=True,
+            )
+        )
+
+        # for slot in self.slots:
+        #     slot = (
+        #         slot.triangulate()
+        #         .clean()
+        #         .compute_normals(
+        #             non_manifold_traversal=False,
+        #             consistent_normals=True,
+        #             auto_orient_normals=True,
+        #         )
+        #     )
+        #     p = pv.Plotter()
+        #     p.add_mesh(tempSocket)
+        #     p.add_mesh(slot)
+        #     p.show()
+        #     print(f"{tempSocket.is_manifold} {slot.is_manifold}")
+        #     boolean = vtkPolyDataBooleanFilter()
+        #     boolean.SetInputData(0, tempSocket)
+        #     boolean.SetInputData(1, slot)
+        #     boolean.SetOperModeToDifference()
+        #     boolean.Update()
+        #     tempSocket = pv.wrap(boolean.GetOutput()).compute_normals(
+        #         non_manifold_traversal=False,
+        #         consistent_normals=True,
+        #         auto_orient_normals=True,
+        #     )
+        tempSocket.plot()
+        polyData = vtk.vtkPolyData()
+        polyData.DeepCopy(tempSocket)
+        polyData.Modified()
+        writer = vtk.vtkSTLWriter()
+        writer.SetFileName("sock.stl")
+        writer.SetInputData(polyData)
+        writer.Write()
+
     def moveAlignMesh(self, mesh, newCenter, newAlignVector, newNormal):
         otherNormal = np.cross(newAlignVector, newNormal)
         v1 = otherNormal / np.linalg.norm(otherNormal)
@@ -1018,11 +1205,12 @@ class HandMesh:
     def removeNonManifoldPartsOfMesh(self, mesh):
         mesh = mesh.triangulate()
         nonManifoldEdges = mesh.extract_feature_edges(
-            boundary_edges=True,
+            boundary_edges=False,
             non_manifold_edges=True,
             feature_edges=False,
             manifold_edges=False,
         )
+
         manifoldEdges = mesh.extract_feature_edges(
             boundary_edges=False,
             non_manifold_edges=False,
@@ -1038,7 +1226,34 @@ class HandMesh:
         extracted2 = manifoldEdges.points
         remapped2 = set([pointMapping[tuple(point)] for point in extracted2])
         exclusiveNonManifoldPointIDs = list(remapped1.difference(remapped2))
-        fixedMesh, _ = mesh.remove_points(exclusiveNonManifoldPointIDs)
+        fixedMesh = mesh
+        if exclusiveNonManifoldPointIDs:
+            fixedMesh, _ = mesh.remove_points(exclusiveNonManifoldPointIDs)
+        bounds = mesh.extract_feature_edges(
+            boundary_edges=False,
+            non_manifold_edges=True,
+            feature_edges=False,
+            manifold_edges=False,
+        )
+        edges = [
+            chunk[1:]
+            for chunk in (
+                bounds.lines[i : i + 3] for i in range(0, len(bounds.lines), 3)
+            )
+        ]
+        extracted = bounds.points
+        pointMapping = {tuple(point): i for i, point in enumerate(og)}
+        remapped3 = list(set([pointMapping[tuple(point)] for point in extracted]))
+        for edge in edges:
+            a = remapped3[edge[0]]
+            b = remapped3[edge[1]]
+            all_faces = mesh.faces.reshape(-1, 4)[:, 1:]
+            faces_to_keep = [
+                (3, face[0], face[1], face[2])
+                for face in all_faces
+                if not (a in face and b in face)
+            ]
+            fixedMesh = pv.PolyData(fixedMesh.points, faces_to_keep)
         return fixedMesh
 
     def extrudeHardSocket(self, polydata):
@@ -1189,15 +1404,13 @@ class HandMesh:
         return finalData
 
     def genHardSocket(self, carpals, fingerMeshes, fingerInfo):
+        self.currPart = 1
+        self.signals.progress.emit(
+            int(self.currPart / self.totalParts["genHardSocket"] * 100)
+        )
+
         baseSocket = pv.wrap(self.finalSocketHard)
         planeDirection = np.array([0, 1, 0])
-
-        testPlane = pv.Plane(
-            direction=self.clipPlaneSource.GetNormal(),
-            center=self.clipPlaneSource.GetCenter(),
-            i_size=500,
-            j_size=500,
-        )
 
         newSurface, _ = baseSocket.clip(
             normal=-1 * planeDirection,
@@ -1206,8 +1419,12 @@ class HandMesh:
         )
         newSurface.cell_data.clear()
 
-        self.finalSocketHard = self.extrudeHardSocket(newSurface)
+        self.currPart += 1
+        self.signals.progress.emit(
+            int(self.currPart / self.totalParts["genHardSocket"] * 100)
+        )
 
+        self.finalSocketHard = self.extrudeHardSocket(newSurface)
         mapper = vtk.vtkPolyDataMapper()
         mapper.SetInputData(self.finalSocketHard)
         actor = vtk.vtkActor()
@@ -1215,11 +1432,13 @@ class HandMesh:
         actor.GetProperty().SetColor(self.colors.GetColor3d("Blue"))
         actor.PickableOff()
         actor.GetProperty().SetOpacity(0.5)
-        # actor.GetProperty().SetRepresentationToWireframe()
         self.renderer.AddActor(actor)
         self.finalSocketHardActor = actor
-        self.renderWindow.Render()
 
+        self.currPart += 1
+        self.signals.progress.emit(
+            int(self.currPart / self.totalParts["genHardSocket"] * 100)
+        )
         self.genConnectivePortion(carpals, fingerMeshes, fingerInfo)
 
     def genConnectivePortion(self, carpals, fingerMeshes, fingerInfo):
@@ -1229,6 +1448,11 @@ class HandMesh:
             .subdivide(2, "butterfly")
         )
         jointRegionalPointIDXs = []
+
+        self.currPart += 1
+        self.signals.progress.emit(
+            int(self.currPart / self.totalParts["genHardSocket"] * 100)
+        )
 
         socket = pv.wrap(self.finalSocketHard).triangulate()
         socket = self.removeNonManifoldPartsOfMesh(socket)
@@ -1243,6 +1467,10 @@ class HandMesh:
         )
         overallTime = time.time()
         for i, carpal in enumerate(carpals):
+            self.currPart += 1
+            self.signals.progress.emit(
+                int(self.currPart / self.totalParts["genHardSocket"] * 100)
+            )
             start = time.time()
             tempIDList = []
             direction = carpal["center"] - carpal["normal"]
@@ -1269,16 +1497,6 @@ class HandMesh:
                     )
                     if angle < threshold:
                         tempIDList.append(idx)
-            pointsToPlot = socket.extract_points(
-                tempIDList, adjacent_cells=False, include_cells=True
-            ).points
-            pls = vtk.vtkPoints()
-            for pt in pointsToPlot:
-                pls.InsertNextPoint(pt)
-            fd = vtk.vtkPolyData()
-            fd.SetPoints(pls)
-            self.plotPointCloud(fd, color=(0.5, 0.2, 1))
-            self.renderWindow.Render()
 
             jointRegionalPointIDXs.append(tempIDList)
 
@@ -1323,16 +1541,6 @@ class HandMesh:
                         <= projectedCircleRadius
                     ):
                         extractedPointIdx.append(idx)
-            pointsToPlot = socket.extract_points(
-                selectedIds, adjacent_cells=False, include_cells=True
-            ).points
-            pls = vtk.vtkPoints()
-            for pt in pointsToPlot:
-                pls.InsertNextPoint(pt)
-            fd = vtk.vtkPolyData()
-            fd.SetPoints(pls)
-            self.plotPointCloud(fd, color=color, size=size)
-            self.renderWindow.Render()
 
             file1 = open("strengthAnalysis/connectiveGenerationTimes.txt", "a")
             file1.write(f"selection: {time.time()-start}\n")
@@ -1361,14 +1569,6 @@ class HandMesh:
                 circumferenceOfPoints[0].append(diskOfPoints[pair])
                 circumferenceOfPoints[1].append(distances[pair])
                 circumferenceOfPoints[2].append(initDistances[pair])
-            pointsToPlot = circumferenceOfPoints[0]
-            pls = vtk.vtkPoints()
-            for pt in pointsToPlot:
-                pls.InsertNextPoint(pt)
-            fd = vtk.vtkPolyData()
-            fd.SetPoints(pls)
-            self.plotPointCloud(fd, color=(1, 1, 0.3))
-            self.renderWindow.Render()
             return circumferenceOfPoints
 
         def findDistanceP(p, fingerVector, jointOrigin):
@@ -1441,7 +1641,12 @@ class HandMesh:
         conjoiningMeshes = []
 
         circumferences = []
+
         for k, carpal in enumerate(carpals):
+            self.currPart += 1
+            self.signals.progress.emit(
+                int(self.currPart / self.totalParts["genHardSocket"] * 100)
+            )
             listOfIds = selectPoints(
                 carpal=carpal,
                 radius=initRadius - 0.4,
@@ -1458,6 +1663,10 @@ class HandMesh:
             circumferences.append(circumferenceOfPoints)
 
         for k, carpal in enumerate(carpals):
+            self.currPart += 1
+            self.signals.progress.emit(
+                int(self.currPart / self.totalParts["genHardSocket"] * 100)
+            )
             proportionallyMovePoints(
                 carpals=carpals,
                 circumferenceOfPoints=circumferences,
@@ -1517,7 +1726,7 @@ class HandMesh:
             conjoiningMeshes.append(wedge)
 
             if self.elasticString:
-                ring = pv.ParametricTorus(ringradius=2.25, crosssectionradius=0.8)
+                ring = pv.ParametricTorus(ringradius=3.5, crosssectionradius=1.8)
 
                 angledVector = carpal["normal"] / np.linalg.norm(
                     carpal["normal"]
@@ -1548,6 +1757,10 @@ class HandMesh:
             auto_orient_normals=True,
         ).smooth_taubin()
         for mesh in conjoiningMeshes:
+            self.currPart += 1
+            self.signals.progress.emit(
+                int(self.currPart / self.totalParts["genHardSocket"] * 100)
+            )
             boolean = vtkPolyDataBooleanFilter()
             boolean.SetInputData(0, socket)
             boolean.SetInputData(1, mesh)
@@ -1555,6 +1768,10 @@ class HandMesh:
             boolean.Update()
             socket = pv.wrap(boolean.GetOutput())
 
+        self.currPart += 1
+        self.signals.progress.emit(
+            int(self.currPart / self.totalParts["genHardSocket"] * 100)
+        )
         cleanedSocket = socket.clean()
 
         file1 = open("strengthAnalysis/connectiveGenerationTime2.txt", "a")
@@ -1565,7 +1782,6 @@ class HandMesh:
         self.finalSocketHard.Modified()
         self.finalSocketHardActor.GetProperty().SetOpacity(1)
         self.finalSocketHardActor.GetProperty().SetColor(self.colors.GetColor3d("Blue"))
-        self.renderWindow.Render()
 
         appendFilter = vtkAppendPolyData()
         appendFilter.AddInputData(self.finalSocket)

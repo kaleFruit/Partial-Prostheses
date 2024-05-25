@@ -4,15 +4,27 @@ class Styles:
             "gray": "#333333",
             "lightGray": "#777777",
             "borderGray": "#999999",
-            "secondaryGreen": "#254f32",
-            "green": "#339955",
+            "secondaryGreen": "#1ECF55",
+            "green": "#13FF00",
         }
         self.styleSheet = """
         * {
-            background-color: #333333; 
+            background-color: @gray; 
             color: white;
             border: none;
             font-size: 16px;
+        }
+
+        #totalBackground {
+            background-color: @secondaryGray;
+        }
+
+        QTabWidget::pane { /* The tab widget frame */
+            border-top: 1px solid @borderGray;
+        }
+
+        QTabBar {
+            background-color: @secondaryGray;
         }
 
         QTabBar::tab {

@@ -3,6 +3,7 @@ import vtk
 import pandas as pd
 import pymeshlab as ml
 from PyQt5 import QtCore, QtGui, QtWidgets, Qt
+from PyQt5.QtCore import QThread, pyqtSignal, QThreadPool, QRunnable, QObject
 from vtkmodules.qt.QVTKRenderWindowInteractor import QVTKRenderWindowInteractor
 import sys
 import open3d as o3d
@@ -18,4 +19,3 @@ import time
 from scipy.optimize import fsolve
 import matplotlib.pyplot as plt
 from scipy import integrate
-from scipy.interpolate import splprep, splev, bisplrep, bisplev, RBFInterpolator

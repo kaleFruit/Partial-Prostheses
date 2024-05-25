@@ -4,8 +4,15 @@ This software provides a solution to those who 3D-print prosthetics in communiti
 
 ## Description
 
-* Users can toggle and manipulate a pseudo skeleton of joints to define the finger generation
-* Users can "paint" the residual limb where they want to define the socket
+- Users can toggle and manipulate a pseudo skeleton of joints to define the finger generation
+- Users can "paint" the residual limb where they want to define the socket
+
+## Current Items in the Works
+
+- Creating a desktop executable
+- Adding file uploads to the GUI
+- Creating a better arm/wrist band
+- Changing the socket to a Voronoi pattern
 
 ## Getting Started
 
@@ -17,9 +24,8 @@ This software provides a solution to those who 3D-print prosthetics in communiti
 
 ### Software Operation
 
-1. Upload a scan of the residual limb as a .ply file
-2. While in the "Finger Generator" tab:
-   1. Position the pseudo skeleton of joints by clicking and dragging on the joints
+1. Upload a scan of the residual limb as a .ply file While in the "Finger Generator" tab:
+2. 1. Position the pseudo skeleton of joints by clicking and dragging on the joints
    2. Disable/enable joints using the sliders for each finger
    3. Click "Generate Fingers" to generate the 3D files for the fingers
 3. Switch to the "Socket Generator" tab:
